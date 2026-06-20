@@ -1,0 +1,588 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>MyHub Bruno Visual Preview</title>
+    <style>
+      :root {
+        color-scheme: light;
+        --bg: #f4f4f5;
+        --rail: #eeeeef;
+        --sidebar: #fafafa;
+        --panel: #ffffff;
+        --panel-soft: #f7f7f8;
+        --panel-muted: #f0f1f3;
+        --line: #dedfe3;
+        --line-strong: #c9ccd3;
+        --text: #24262d;
+        --muted: #686d78;
+        --faint: #9aa0aa;
+        --orange: #f26b3a;
+        --orange-soft: #fff0eb;
+        --blue: #2563eb;
+        --green: #16a34a;
+        --green-soft: #eaf8ef;
+        --red: #dc2626;
+        --shadow: 0 1px 2px rgba(24, 27, 35, 0.06);
+        font-family:
+          Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
+          "PingFang SC", "Microsoft YaHei", sans-serif;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        min-width: 1180px;
+        min-height: 100vh;
+        margin: 0;
+        overflow: hidden;
+        background: var(--bg);
+        color: var(--text);
+      }
+
+      button,
+      input {
+        font: inherit;
+      }
+
+      .shell {
+        display: grid;
+        grid-template-columns: 56px 316px 1fr;
+        width: 100vw;
+        height: 100vh;
+        overflow: hidden;
+      }
+
+      .rail {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 6px;
+        padding: 10px 7px;
+        border-right: 1px solid var(--line);
+        background: var(--rail);
+      }
+
+      .brand {
+        display: grid;
+        place-items: center;
+        width: 34px;
+        height: 34px;
+        margin-bottom: 8px;
+        border-radius: 10px;
+        background: var(--orange);
+        color: #fff;
+        font-size: 12px;
+        font-weight: 850;
+      }
+
+      .rail-btn {
+        display: grid;
+        place-items: center;
+        width: 38px;
+        height: 38px;
+        border: 0;
+        border-radius: 10px;
+        background: transparent;
+        color: var(--muted);
+        cursor: pointer;
+        font-size: 10px;
+        font-weight: 760;
+      }
+
+      .rail-btn:hover {
+        background: #fff;
+      }
+
+      .rail-btn:active {
+        background: var(--panel-muted);
+      }
+
+      .rail-btn.active {
+        background: #fff;
+        color: var(--orange);
+        box-shadow: var(--shadow);
+      }
+
+      .sidebar {
+        display: flex;
+        min-width: 0;
+        flex-direction: column;
+        border-right: 1px solid var(--line);
+        background: var(--sidebar);
+      }
+
+      .sidebar-head {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        height: 56px;
+        padding: 0 12px;
+        border-bottom: 1px solid var(--line);
+      }
+
+      .sidebar-head p {
+        margin: 0 0 2px;
+        color: var(--faint);
+        font-size: 10px;
+        font-weight: 760;
+      }
+
+      .sidebar-head h1 {
+        margin: 0;
+        font-size: 16px;
+        font-weight: 780;
+      }
+
+      .icon-btn {
+        display: grid;
+        place-items: center;
+        width: 28px;
+        height: 28px;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: #fff;
+        color: var(--muted);
+        cursor: pointer;
+      }
+
+      .icon-btn:hover {
+        border-color: var(--line-strong);
+        color: var(--text);
+      }
+
+      .search {
+        padding: 10px;
+      }
+
+      .search input {
+        width: 100%;
+        height: 32px;
+        padding: 0 10px;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        outline: 0;
+        background: #fff;
+        color: var(--text);
+        font-size: 12px;
+      }
+
+      .search input:focus {
+        border-color: var(--orange);
+        box-shadow: 0 0 0 3px rgba(242, 107, 58, 0.13);
+      }
+
+      .actions {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 6px;
+        padding: 0 10px 10px;
+        border-bottom: 1px solid var(--line);
+      }
+
+      .action {
+        height: 28px;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: #fff;
+        color: var(--muted);
+        cursor: pointer;
+        font-size: 12px;
+      }
+
+      .action:hover {
+        border-color: var(--line-strong);
+        color: var(--text);
+      }
+
+      .connections {
+        min-height: 0;
+        flex: 1;
+        overflow: auto;
+        padding: 8px;
+      }
+
+      .connection-row {
+        display: grid;
+        grid-template-columns: 1fr 28px;
+        align-items: center;
+        gap: 4px;
+      }
+
+      .connection {
+        display: grid;
+        grid-template-columns: 22px 1fr;
+        gap: 8px;
+        align-items: center;
+        min-height: 44px;
+        padding: 6px 8px;
+        border: 1px solid transparent;
+        border-radius: 9px;
+        background: transparent;
+        color: var(--text);
+        cursor: pointer;
+        text-align: left;
+      }
+
+      .connection:hover {
+        background: var(--panel-muted);
+      }
+
+      .connection:active {
+        background: #e8e9ec;
+      }
+
+      .connection.active {
+        border-color: #ffd6c8;
+        background: var(--orange-soft);
+      }
+
+      .node {
+        display: grid;
+        place-items: center;
+        width: 20px;
+        height: 20px;
+        border-radius: 7px;
+        background: #343741;
+        color: #fff;
+        font-size: 10px;
+        font-weight: 820;
+      }
+
+      .connection strong {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        min-width: 0;
+        font-size: 13px;
+        font-weight: 720;
+      }
+
+      .connection strong span:first-child {
+        min-width: 0;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .connection small {
+        display: block;
+        margin-top: 2px;
+        overflow: hidden;
+        color: var(--muted);
+        font-size: 11px;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .status {
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+        margin-left: auto;
+        color: var(--green);
+        font-size: 11px;
+        font-style: normal;
+        font-weight: 700;
+        white-space: nowrap;
+      }
+
+      .status::before {
+        width: 7px;
+        height: 7px;
+        border-radius: 50%;
+        background: currentColor;
+        content: "";
+      }
+
+      .status.off {
+        color: var(--faint);
+      }
+
+      .menu {
+        width: 26px;
+        height: 30px;
+        border: 0;
+        border-radius: 8px;
+        background: transparent;
+        color: var(--faint);
+        cursor: pointer;
+      }
+
+      .menu:hover {
+        background: var(--panel-muted);
+        color: var(--muted);
+      }
+
+      .schema-tree {
+        margin: 2px 0 6px 30px;
+        padding-left: 8px;
+        border-left: 1px solid var(--line);
+      }
+
+      .tree-row {
+        display: grid;
+        grid-template-columns: 18px 1fr auto;
+        gap: 7px;
+        align-items: center;
+        min-height: 28px;
+        padding: 0 7px;
+        border-radius: 8px;
+        color: var(--muted);
+        cursor: pointer;
+        font-size: 12px;
+      }
+
+      .tree-row:hover {
+        background: var(--panel-muted);
+        color: var(--text);
+      }
+
+      .tree-row.active {
+        background: var(--green-soft);
+        color: var(--green);
+        font-weight: 720;
+      }
+
+      .tree-icon {
+        display: grid;
+        place-items: center;
+        width: 18px;
+        height: 18px;
+        border-radius: 6px;
+        background: #fff;
+        color: var(--muted);
+        font-size: 10px;
+        box-shadow: inset 0 0 0 1px var(--line);
+      }
+
+      .main {
+        display: flex;
+        min-width: 0;
+        flex-direction: column;
+        background: var(--panel);
+      }
+
+      .tabs {
+        display: flex;
+        align-items: end;
+        min-height: 40px;
+        gap: 2px;
+        padding: 0 10px;
+        border-bottom: 1px solid var(--line);
+        background: var(--panel-soft);
+      }
+
+      .tab {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        max-width: 220px;
+        height: 32px;
+        padding: 0 12px;
+        border: 1px solid var(--line);
+        border-bottom: 0;
+        border-radius: 9px 9px 0 0;
+        background: #fff;
+        color: var(--text);
+        cursor: pointer;
+        font-size: 12px;
+      }
+
+      .workspace {
+        min-height: 0;
+        flex: 1;
+        padding: 10px;
+      }
+
+      .empty {
+        display: grid;
+        height: 100%;
+        place-content: center;
+        color: var(--muted);
+        text-align: center;
+      }
+
+      .empty strong {
+        display: block;
+        margin-bottom: 6px;
+        color: var(--text);
+        font-size: 15px;
+      }
+
+      .table-panel {
+        height: 100%;
+        overflow: hidden;
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        background: #fff;
+      }
+
+      .panel-title {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        height: 38px;
+        padding: 0 12px;
+        border-bottom: 1px solid var(--line);
+        background: var(--panel-soft);
+        font-size: 13px;
+        font-weight: 720;
+      }
+
+      .panel-title span {
+        color: var(--muted);
+        font-size: 12px;
+        font-weight: 400;
+      }
+
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 12px;
+      }
+
+      th,
+      td {
+        height: 34px;
+        padding: 0 10px;
+        border-right: 1px solid var(--line);
+        border-bottom: 1px solid var(--line);
+        text-align: left;
+        white-space: nowrap;
+      }
+
+      th {
+        background: var(--panel-soft);
+        color: var(--muted);
+        font-weight: 720;
+      }
+
+      tr:hover td {
+        background: #fafafa;
+      }
+    </style>
+  </head>
+  <body>
+    <main class="shell">
+      <aside class="rail">
+        <div class="brand">M</div>
+        <button class="rail-btn active">DB</button>
+        <button class="rail-btn">SSH</button>
+        <button class="rail-btn">SFTP</button>
+        <button class="rail-btn">MON</button>
+      </aside>
+
+      <aside class="sidebar">
+        <header class="sidebar-head">
+          <div>
+            <p>工作区</p>
+            <h1>数据库</h1>
+          </div>
+          <button class="icon-btn">+</button>
+        </header>
+
+        <div class="search">
+          <input placeholder="搜索连接、库表、查询" />
+        </div>
+
+        <div class="actions">
+          <button class="action">新建查询</button>
+          <button class="action">导入数据</button>
+          <button class="action">备份</button>
+        </div>
+
+        <section class="connections">
+          <div class="connection-row">
+            <button class="connection active">
+              <span class="node">M</span>
+              <span>
+                <strong><span>prod-mysql-01</span><em class="status">已连接</em></strong>
+                <small>MySQL · 127.0.0.1:3306</small>
+              </span>
+            </button>
+            <button class="menu">...</button>
+          </div>
+
+          <div class="schema-tree">
+            <div class="tree-row active"><span class="tree-icon">●</span><span>employees</span><span>6</span></div>
+            <div class="tree-row"><span class="tree-icon">T</span><span>表</span><span>6</span></div>
+            <div class="tree-row" style="padding-left: 30px"><span class="tree-icon">T</span><span>employees</span></div>
+            <div class="tree-row" style="padding-left: 30px"><span class="tree-icon">T</span><span>salaries</span></div>
+            <div class="tree-row"><span class="tree-icon">V</span><span>视图</span><span>1</span></div>
+          </div>
+
+          <div class="connection-row">
+            <button class="connection">
+              <span class="node">M</span>
+              <span>
+                <strong><span>local-mysql</span><em class="status off">未连接</em></strong>
+                <small>MySQL · 127.0.0.1:3307</small>
+              </span>
+            </button>
+            <button class="menu">...</button>
+          </div>
+        </section>
+      </aside>
+
+      <section class="main">
+        <div class="tabs">
+          <button class="tab">employees · 表 <span style="color: var(--faint)">×</span></button>
+        </div>
+
+        <section class="workspace">
+          <div class="table-panel">
+            <div class="panel-title">
+              <strong>employees · 全部表</strong>
+              <span>6 tables</span>
+            </div>
+            <table>
+              <thead>
+                <tr>
+                  <th>表名</th>
+                  <th>库</th>
+                  <th>数据量</th>
+                  <th>类型</th>
+                  <th>状态</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>departments</td>
+                  <td>employees</td>
+                  <td>9</td>
+                  <td>BASE TABLE</td>
+                  <td>Ready</td>
+                </tr>
+                <tr>
+                  <td>dept_emp</td>
+                  <td>employees</td>
+                  <td>331603</td>
+                  <td>BASE TABLE</td>
+                  <td>Ready</td>
+                </tr>
+                <tr>
+                  <td>employees</td>
+                  <td>employees</td>
+                  <td>300024</td>
+                  <td>BASE TABLE</td>
+                  <td>Ready</td>
+                </tr>
+                <tr>
+                  <td>salaries</td>
+                  <td>employees</td>
+                  <td>2844047</td>
+                  <td>BASE TABLE</td>
+                  <td>Ready</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+      </section>
+    </main>
+  </body>
+</html>

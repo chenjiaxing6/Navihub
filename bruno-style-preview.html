@@ -1,0 +1,691 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>MyHub Bruno Style Preview</title>
+    <style>
+      :root {
+        color-scheme: light;
+        --bg: #f4f4f5;
+        --sidebar: #fafafa;
+        --panel: #ffffff;
+        --panel-soft: #f7f7f8;
+        --panel-muted: #f0f1f3;
+        --line: #dedfe3;
+        --line-strong: #c9ccd3;
+        --text: #24262d;
+        --muted: #686d78;
+        --faint: #9aa0aa;
+        --orange: #f26b3a;
+        --orange-soft: #fff0eb;
+        --blue: #2563eb;
+        --green: #16a34a;
+        --green-soft: #eaf8ef;
+        --red: #dc2626;
+        --purple: #7c3aed;
+        --shadow: 0 1px 2px rgba(24, 27, 35, 0.06);
+        font-family:
+          Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
+          "PingFang SC", "Microsoft YaHei", sans-serif;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        min-width: 1220px;
+        min-height: 100vh;
+        margin: 0;
+        overflow: hidden;
+        background: var(--bg);
+        color: var(--text);
+      }
+
+      button,
+      input {
+        font: inherit;
+      }
+
+      .app {
+        display: grid;
+        grid-template-columns: 54px 286px 1fr;
+        width: 100vw;
+        height: 100vh;
+        overflow: hidden;
+      }
+
+      .rail {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 6px;
+        padding: 10px 7px;
+        border-right: 1px solid var(--line);
+        background: #eeeeef;
+      }
+
+      .brand {
+        display: grid;
+        place-items: center;
+        width: 34px;
+        height: 34px;
+        margin-bottom: 8px;
+        border-radius: 10px;
+        background: var(--orange);
+        color: #fff;
+        font-weight: 850;
+      }
+
+      .rail-btn {
+        display: grid;
+        place-items: center;
+        width: 38px;
+        height: 38px;
+        border: 0;
+        border-radius: 10px;
+        background: transparent;
+        color: var(--muted);
+        cursor: pointer;
+        font-size: 11px;
+        font-weight: 760;
+      }
+
+      .rail-btn:hover {
+        background: #fff;
+      }
+
+      .rail-btn.active {
+        background: #fff;
+        color: var(--orange);
+        box-shadow: var(--shadow);
+      }
+
+      .sidebar {
+        display: flex;
+        min-width: 0;
+        flex-direction: column;
+        border-right: 1px solid var(--line);
+        background: var(--sidebar);
+      }
+
+      .sidebar-head {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        height: 52px;
+        padding: 0 12px;
+        border-bottom: 1px solid var(--line);
+      }
+
+      .sidebar-head h1 {
+        margin: 0;
+        font-size: 15px;
+        font-weight: 780;
+      }
+
+      .icon-btn {
+        display: grid;
+        place-items: center;
+        width: 28px;
+        height: 28px;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: #fff;
+        color: var(--muted);
+        cursor: pointer;
+      }
+
+      .icon-btn:hover {
+        border-color: var(--line-strong);
+        color: var(--text);
+      }
+
+      .search {
+        padding: 10px;
+        border-bottom: 1px solid var(--line);
+      }
+
+      .search input {
+        width: 100%;
+        height: 32px;
+        padding: 0 10px;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        outline: 0;
+        background: #fff;
+        color: var(--text);
+        font-size: 12px;
+      }
+
+      .search input:focus {
+        border-color: var(--orange);
+        box-shadow: 0 0 0 3px rgba(242, 107, 58, 0.13);
+      }
+
+      .tree {
+        min-height: 0;
+        flex: 1;
+        overflow: auto;
+        padding: 8px;
+      }
+
+      .tree-section {
+        margin-bottom: 12px;
+      }
+
+      .tree-title {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        height: 24px;
+        padding: 0 6px;
+        color: var(--faint);
+        font-size: 11px;
+        font-weight: 760;
+        text-transform: uppercase;
+      }
+
+      .tree-row {
+        display: grid;
+        grid-template-columns: 20px 1fr auto;
+        align-items: center;
+        gap: 7px;
+        width: 100%;
+        min-height: 30px;
+        padding: 0 7px;
+        border: 0;
+        border-radius: 7px;
+        background: transparent;
+        color: var(--muted);
+        cursor: pointer;
+        text-align: left;
+        font-size: 12px;
+      }
+
+      .tree-row:hover {
+        background: var(--panel-muted);
+        color: var(--text);
+      }
+
+      .tree-row.active {
+        background: var(--orange-soft);
+        color: #a8421f;
+        font-weight: 720;
+      }
+
+      .tree-icon {
+        display: grid;
+        place-items: center;
+        width: 18px;
+        height: 18px;
+        border-radius: 6px;
+        background: #fff;
+        color: var(--muted);
+        font-size: 10px;
+        box-shadow: inset 0 0 0 1px var(--line);
+      }
+
+      .method {
+        display: inline-flex;
+        align-items: center;
+        height: 18px;
+        padding: 0 5px;
+        border-radius: 5px;
+        font-size: 10px;
+        font-weight: 820;
+      }
+
+      .method.select {
+        background: #e8f1ff;
+        color: var(--blue);
+      }
+
+      .method.table {
+        background: #eaf8ef;
+        color: var(--green);
+      }
+
+      .method.proc {
+        background: #f3eefe;
+        color: var(--purple);
+      }
+
+      .main {
+        display: grid;
+        grid-template-rows: 46px 52px 1fr;
+        min-width: 0;
+        background: var(--panel);
+      }
+
+      .tabs {
+        display: flex;
+        align-items: end;
+        gap: 2px;
+        padding: 0 10px;
+        border-bottom: 1px solid var(--line);
+        background: var(--panel-soft);
+      }
+
+      .tab {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        max-width: 220px;
+        height: 34px;
+        padding: 0 12px;
+        border: 1px solid var(--line);
+        border-bottom: 0;
+        border-radius: 9px 9px 0 0;
+        background: #fff;
+        color: var(--text);
+        cursor: pointer;
+        font-size: 12px;
+      }
+
+      .tab.muted {
+        background: transparent;
+        color: var(--muted);
+      }
+
+      .request-bar {
+        display: grid;
+        grid-template-columns: 120px 1fr auto;
+        align-items: center;
+        gap: 8px;
+        padding: 8px 10px;
+        border-bottom: 1px solid var(--line);
+      }
+
+      .select-box,
+      .url-box {
+        display: flex;
+        align-items: center;
+        height: 34px;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: #fff;
+        font-size: 12px;
+      }
+
+      .select-box {
+        justify-content: space-between;
+        padding: 0 10px;
+        color: var(--green);
+        font-weight: 820;
+      }
+
+      .url-box {
+        min-width: 0;
+        padding: 0 11px;
+        color: var(--muted);
+        font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      }
+
+      .url-box strong {
+        color: var(--text);
+        font-weight: 650;
+      }
+
+      .run-btn {
+        height: 34px;
+        padding: 0 17px;
+        border: 0;
+        border-radius: 8px;
+        background: var(--orange);
+        color: #fff;
+        cursor: pointer;
+        font-size: 12px;
+        font-weight: 780;
+      }
+
+      .run-btn:hover {
+        background: #e65d2e;
+      }
+
+      .workspace {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) 45%;
+        min-height: 0;
+      }
+
+      .request-pane,
+      .response-pane {
+        display: flex;
+        min-width: 0;
+        min-height: 0;
+        flex-direction: column;
+      }
+
+      .request-pane {
+        border-right: 1px solid var(--line);
+      }
+
+      .pane-tabs {
+        display: flex;
+        gap: 14px;
+        height: 38px;
+        padding: 0 14px;
+        border-bottom: 1px solid var(--line);
+        background: var(--panel-soft);
+      }
+
+      .pane-tab {
+        position: relative;
+        display: inline-flex;
+        align-items: center;
+        border: 0;
+        background: transparent;
+        color: var(--muted);
+        cursor: pointer;
+        font-size: 12px;
+        font-weight: 680;
+      }
+
+      .pane-tab.active {
+        color: var(--text);
+      }
+
+      .pane-tab.active::after {
+        position: absolute;
+        right: 0;
+        bottom: 0;
+        left: 0;
+        height: 2px;
+        border-radius: 2px 2px 0 0;
+        background: var(--orange);
+        content: "";
+      }
+
+      .editor,
+      .response-body {
+        min-height: 0;
+        flex: 1;
+        overflow: auto;
+        padding: 14px;
+      }
+
+      .code {
+        margin: 0;
+        color: #2d3340;
+        font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+        font-size: 12px;
+        line-height: 1.75;
+        white-space: pre-wrap;
+      }
+
+      .kw {
+        color: var(--blue);
+        font-weight: 760;
+      }
+
+      .str {
+        color: #a8421f;
+      }
+
+      .params {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 12px;
+      }
+
+      .params th,
+      .params td {
+        height: 34px;
+        padding: 0 10px;
+        border-right: 1px solid var(--line);
+        border-bottom: 1px solid var(--line);
+        text-align: left;
+      }
+
+      .params th {
+        background: var(--panel-soft);
+        color: var(--muted);
+        font-weight: 720;
+      }
+
+      .response-head {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        height: 38px;
+        padding: 0 12px;
+        border-bottom: 1px solid var(--line);
+        background: var(--panel-soft);
+      }
+
+      .status {
+        display: inline-flex;
+        align-items: center;
+        gap: 7px;
+        color: var(--green);
+        font-size: 12px;
+        font-weight: 780;
+      }
+
+      .status::before {
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        background: currentColor;
+        content: "";
+      }
+
+      .meta {
+        color: var(--muted);
+        font-size: 12px;
+      }
+
+      .result-table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 12px;
+      }
+
+      .result-table th,
+      .result-table td {
+        height: 34px;
+        padding: 0 10px;
+        border-right: 1px solid var(--line);
+        border-bottom: 1px solid var(--line);
+        text-align: left;
+        white-space: nowrap;
+      }
+
+      .result-table th {
+        background: var(--panel-soft);
+        color: var(--muted);
+        font-weight: 720;
+      }
+
+      .result-table tr:hover td {
+        background: #fafafa;
+      }
+    </style>
+  </head>
+  <body>
+    <main class="app">
+      <aside class="rail">
+        <div class="brand">B</div>
+        <button class="rail-btn active">DB</button>
+        <button class="rail-btn">API</button>
+        <button class="rail-btn">SSH</button>
+        <button class="rail-btn">SFTP</button>
+        <button class="rail-btn">MON</button>
+      </aside>
+
+      <aside class="sidebar">
+        <header class="sidebar-head">
+          <h1>数据库集合</h1>
+          <button class="icon-btn">+</button>
+        </header>
+
+        <div class="search">
+          <input placeholder="搜索连接、库表、查询" />
+        </div>
+
+        <nav class="tree">
+          <section class="tree-section">
+            <div class="tree-title"><span>连接</span><span>2</span></div>
+            <button class="tree-row active">
+              <span class="tree-icon">M</span>
+              <span>prod-mysql-01</span>
+              <span class="method table">已连</span>
+            </button>
+            <button class="tree-row">
+              <span class="tree-icon">M</span>
+              <span>local-mysql</span>
+              <span class="method">离线</span>
+            </button>
+          </section>
+
+          <section class="tree-section">
+            <div class="tree-title"><span>employees</span><span>8</span></div>
+            <button class="tree-row active">
+              <span class="tree-icon">T</span>
+              <span>employees</span>
+              <span class="method select">SELECT</span>
+            </button>
+            <button class="tree-row">
+              <span class="tree-icon">T</span>
+              <span>dept_emp</span>
+              <span class="method select">SELECT</span>
+            </button>
+            <button class="tree-row">
+              <span class="tree-icon">T</span>
+              <span>salaries</span>
+              <span class="method select">SELECT</span>
+            </button>
+            <button class="tree-row">
+              <span class="tree-icon">V</span>
+              <span>active_employees</span>
+              <span class="method table">VIEW</span>
+            </button>
+            <button class="tree-row">
+              <span class="tree-icon">ƒ</span>
+              <span>current_manager</span>
+              <span class="method proc">PROC</span>
+            </button>
+          </section>
+
+          <section class="tree-section">
+            <div class="tree-title"><span>保存查询</span><span>3</span></div>
+            <button class="tree-row">
+              <span class="tree-icon">Q</span>
+              <span>最近入职员工</span>
+              <span class="method select">SQL</span>
+            </button>
+            <button class="tree-row">
+              <span class="tree-icon">Q</span>
+              <span>薪资变化</span>
+              <span class="method select">SQL</span>
+            </button>
+          </section>
+        </nav>
+      </aside>
+
+      <section class="main">
+        <div class="tabs">
+          <button class="tab"><span class="method select">SELECT</span> employees.sql <span style="color: var(--faint)">×</span></button>
+          <button class="tab muted"><span class="method table">TABLE</span> dept_emp</button>
+        </div>
+
+        <div class="request-bar">
+          <div class="select-box">SELECT <span>⌄</span></div>
+          <div class="url-box"><strong>prod-mysql-01</strong> / employees / employees</div>
+          <button class="run-btn">运行</button>
+        </div>
+
+        <div class="workspace">
+          <section class="request-pane">
+            <nav class="pane-tabs">
+              <button class="pane-tab active">查询</button>
+              <button class="pane-tab">参数</button>
+              <button class="pane-tab">变量</button>
+              <button class="pane-tab">脚本</button>
+            </nav>
+            <div class="editor">
+              <pre class="code"><span class="kw">SELECT</span> emp_no, first_name, last_name, hire_date
+<span class="kw">FROM</span> employees.employees
+<span class="kw">WHERE</span> hire_date &gt;= <span class="str">'1990-01-01'</span>
+<span class="kw">ORDER BY</span> hire_date <span class="kw">DESC</span>
+<span class="kw">LIMIT</span> 100;</pre>
+            </div>
+            <table class="params">
+              <thead>
+                <tr>
+                  <th>名称</th>
+                  <th>值</th>
+                  <th>说明</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>database</td>
+                  <td>employees</td>
+                  <td>当前库</td>
+                </tr>
+                <tr>
+                  <td>limit</td>
+                  <td>100</td>
+                  <td>返回行数</td>
+                </tr>
+              </tbody>
+            </table>
+          </section>
+
+          <section class="response-pane">
+            <div class="response-head">
+              <span class="status">查询成功</span>
+              <span class="meta">100 行 · 18ms · 影响 0 行</span>
+            </div>
+            <nav class="pane-tabs">
+              <button class="pane-tab active">结果</button>
+              <button class="pane-tab">结构</button>
+              <button class="pane-tab">日志</button>
+            </nav>
+            <div class="response-body">
+              <table class="result-table">
+                <thead>
+                  <tr>
+                    <th>emp_no</th>
+                    <th>first_name</th>
+                    <th>last_name</th>
+                    <th>hire_date</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr>
+                    <td>499998</td>
+                    <td>Patricia</td>
+                    <td>Breugel</td>
+                    <td>2000-01-23</td>
+                  </tr>
+                  <tr>
+                    <td>499997</td>
+                    <td>Berhard</td>
+                    <td>Lenart</td>
+                    <td>1999-12-21</td>
+                  </tr>
+                  <tr>
+                    <td>499996</td>
+                    <td>Zito</td>
+                    <td>Baaz</td>
+                    <td>1999-11-16</td>
+                  </tr>
+                  <tr>
+                    <td>499995</td>
+                    <td>Dekang</td>
+                    <td>Lichtner</td>
+                    <td>1999-10-09</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </section>
+        </div>
+      </section>
+    </main>
+  </body>
+</html>

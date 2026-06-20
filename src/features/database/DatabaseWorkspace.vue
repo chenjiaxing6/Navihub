@@ -1,9 +1,9 @@
 <script setup>
-import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from "vue";
+import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, shallowRef, watch } from "vue";
 import { ElMessage } from "element-plus";
-import { Close, DataAnalysis, Right, Search } from "@element-plus/icons-vue";
+import { Close, DataAnalysis, Right, Search, VideoPlay } from "@element-plus/icons-vue";
 import ContextMenu from "../../shared/ContextMenu.vue";
-import { executeMysqlQuery } from "./mysqlApi";
+import { describeMysqlTable, executeMysqlQuery } from "./mysqlApi";
 import { ensureMysqlConnection, formatMysqlMeta } from "./databaseDefaults";
 
 const props = defineProps({
@@ -13,7 +13,7 @@ const props = defineProps({
   pendingTableQuery: { type: Object, default: null },
 });
 
-const emit = defineEmits(["schema-loaded", "update-connection", "open-table-query"]);
+const emit = defineEmits(["schema-loaded", "update-connection", "open-table-query", "update-query-schema"]);
 const normalizedConnection = computed(() => ensureMysqlConnection(props.connection));
 const databaseTarget = computed(() => {
   const config = normalizedConnection.value.config;
@@ -32,6 +32,8 @@ const form = reactive({
 
 const loading = ref(false);
 const tableResults = ref({});
+const querySqlByTab = ref({});
+const queryColumnCompletionsBySchema = ref({});
 const schemaTableCounts = ref({});
 const schemaTableMetadata = ref({});
 const selectedSchemaTableKey = ref("");
@@ -52,21 +54,35 @@ const schemaTableScrollLeft = ref(0);
 const schemaTableScrollTop = ref(0);
 const schemaTableViewport = ref(null);
 const tableViewport = ref(null);
+const queryEditorRoot = ref(null);
+const queryEditorView = shallowRef(null);
+const queryEditorReady = ref(false);
 const searchInputRef = ref(null);
 const tableScrollTop = ref(0);
 const tableScrollLeft = ref(0);
 const tableViewportHeight = ref(420);
 const tableSearchOpen = ref(false);
 const tableSearchQuery = ref("");
+const querySelection = ref({ start: 0, end: 0 });
 const DEFAULT_PAGE_SIZE = 1000;
 const PAGE_SIZE_OPTIONS = [100, 500, 1000, 2000, 5000];
 const TABLE_ROW_HEIGHT = 34;
 const TABLE_OVERSCAN = 8;
 const TABLE_COLUMN_MIN_WIDTH = 58;
 const TABLE_COLUMN_MAX_WIDTH = 640;
+const SQL_COMPLETION_KEYWORDS = [
+  "SELECT", "FROM", "WHERE", "JOIN", "LEFT JOIN", "RIGHT JOIN", "INNER JOIN", "ORDER BY", "GROUP BY",
+  "HAVING", "LIMIT", "OFFSET", "INSERT", "INTO", "VALUES", "UPDATE", "SET", "DELETE", "CREATE",
+  "ALTER", "DROP", "TABLE", "VIEW", "INDEX", "PRIMARY KEY", "FOREIGN KEY", "DISTINCT", "COUNT",
+  "SUM", "AVG", "MIN", "MAX", "AS", "AND", "OR", "NOT", "NULL", "IS", "IN", "LIKE", "BETWEEN",
+  "EXISTS", "CASE", "WHEN", "THEN", "ELSE", "END", "UNION", "ALL", "DESC", "ASC",
+];
 let tableResizeObserver = null;
+let queryEditorModules = null;
+let queryEditorModulesPromise = null;
 let activeViewStateTabId = null;
 let restoringViewState = false;
+let applyingQueryEditorContent = false;
 
 watch(
   () => normalizedConnection.value,
@@ -107,9 +123,29 @@ watch(
     }
 
     await nextTick();
+    if (props.activeTopTab?.kind === "query") {
+      await createQueryEditor();
+      syncQueryEditorContent(activeQueryText.value);
+      loadQueryColumnCompletions(props.activeTopTab.schema);
+    } else {
+      destroyQueryEditor();
+    }
     applyStoredScrollState();
   },
   { immediate: true },
+);
+
+watch(
+  () => props.activeTopTab?.kind === "query" ? props.activeTopTab.schema : null,
+  async (schema) => {
+    if (!schema || props.activeTopTab?.kind !== "query") {
+      return;
+    }
+
+    await nextTick();
+    loadQueryColumnCompletions(schema);
+    queryEditorView.value?.dispatch({ effects: [] });
+  },
 );
 
 watch(
@@ -242,6 +278,41 @@ const searchedResultRows = computed(() => {
     rowMatchesSearch(row, tableColumns.value, normalizedTableSearch.value, tableCellValue),
   );
 });
+const activeQueryText = computed({
+  get() {
+    const tab = props.activeTopTab;
+    if (!tab || tab.kind !== "query") {
+      return "";
+    }
+
+    return querySqlByTab.value[tab.id] ?? defaultQuerySql(tab.schema);
+  },
+  set(value) {
+    const tab = props.activeTopTab;
+    if (!tab || tab.kind !== "query") {
+      return;
+    }
+
+    querySqlByTab.value = {
+      ...querySqlByTab.value,
+      [tab.id]: value,
+    };
+  },
+});
+const hasSelectedQueryText = computed(() => {
+  querySelection.value;
+  return Boolean(selectedQueryText().trim());
+});
+const queryRunLabel = computed(() => (hasSelectedQueryText.value ? "执行选中" : "执行"));
+const querySchemaOptions = computed(() => normalizedConnection.value.schemas?.map((schema) => schema.name) ?? []);
+const activeQuerySchemaName = computed({
+  get() {
+    return props.activeTopTab?.kind === "query" ? props.activeTopTab.schema : "";
+  },
+  set(schema) {
+    changeQuerySchema(schema);
+  },
+});
 
 function currentConfig() {
   return {
@@ -269,6 +340,325 @@ function quoteIdentifier(value) {
 
 function quoteString(value) {
   return `'${String(value).replaceAll("\\", "\\\\").replaceAll("'", "''")}'`;
+}
+
+function defaultQuerySql(schema) {
+  return schema ? `-- ${schema}\nSELECT 1;` : "SELECT 1;";
+}
+
+function activeQuerySchema() {
+  const schemaName = props.activeTopTab?.kind === "query" ? props.activeTopTab.schema : null;
+  return normalizedConnection.value.schemas?.find((schema) => schema.name === schemaName) ?? null;
+}
+
+function changeQuerySchema(schema) {
+  if (!schema || props.activeTopTab?.kind !== "query" || schema === props.activeTopTab.schema) {
+    return;
+  }
+
+  const tabId = props.activeTopTab.id;
+  emit("update-query-schema", { tabId, schema });
+  form.database = schema;
+  tableResults.value = {
+    ...tableResults.value,
+    [tabId]: {
+      columns: [],
+      rows: [],
+      affectedRows: 0,
+      elapsedMs: 0,
+      schema,
+      table: null,
+      page: 1,
+      pageSize: 0,
+      totalRows: 0,
+    },
+  };
+  loadQueryColumnCompletions(schema);
+  persistConfig();
+}
+
+function currentSchemaObjectCompletions() {
+  const schema = activeQuerySchema();
+  if (!schema) {
+    return [];
+  }
+
+  return (schema.groups ?? [])
+    .filter((group) => ["table", "view"].includes(group.groupType ?? group.type))
+    .flatMap((group) => {
+      const type = (group.groupType ?? group.type) === "view" ? "视图" : "表";
+      return (group.items ?? []).map((item) => {
+        const label = typeof item === "string" ? item : item.name;
+        return {
+          label,
+          type: "variable",
+          detail: type,
+          apply: label,
+        };
+      });
+    });
+}
+
+function queryColumnCompletionKey(schemaName) {
+  return `${normalizedConnection.value.id}:${schemaName}`;
+}
+
+function currentSchemaColumnCompletions() {
+  const schemaName = props.activeTopTab?.kind === "query" ? props.activeTopTab.schema : null;
+  return schemaName ? queryColumnCompletionsBySchema.value[queryColumnCompletionKey(schemaName)] ?? [] : [];
+}
+
+function queryCompletionSource(context) {
+  const word = context.matchBefore(/[\w.`\u4e00-\u9fa5]+/);
+  if (!word || (word.from === word.to && !context.explicit)) {
+    return null;
+  }
+
+  const options = [
+    ...SQL_COMPLETION_KEYWORDS.map((keyword) => ({
+      label: keyword,
+      type: "keyword",
+      detail: "SQL",
+      apply: keyword,
+    })),
+    ...currentSchemaObjectCompletions(),
+    ...currentSchemaColumnCompletions(),
+  ];
+
+  return {
+    from: word.from,
+    options,
+    validFor: /^[\w.`\u4e00-\u9fa5]*$/,
+  };
+}
+
+async function loadQueryColumnCompletions(schemaName) {
+  if (!schemaName) {
+    return;
+  }
+
+  const cacheKey = queryColumnCompletionKey(schemaName);
+  if (queryColumnCompletionsBySchema.value[cacheKey]) {
+    return;
+  }
+
+  const schema = activeQuerySchema();
+  const objects = (schema?.groups ?? [])
+    .filter((group) => ["table", "view"].includes(group.groupType ?? group.type))
+    .flatMap((group) => (group.items ?? []).map((item) => (typeof item === "string" ? item : item.name)))
+    .filter(Boolean);
+
+  if (objects.length === 0) {
+    queryColumnCompletionsBySchema.value = {
+      ...queryColumnCompletionsBySchema.value,
+      [cacheKey]: [],
+    };
+    return;
+  }
+
+  const completions = [];
+  const unqualifiedColumns = new Map();
+  const workers = Array.from({ length: Math.min(4, objects.length) }, async (_, workerIndex) => {
+    for (let index = workerIndex; index < objects.length; index += 4) {
+      const table = objects[index];
+      try {
+        const detail = await describeMysqlTable(currentConfig(), schemaName, table);
+        for (const column of detail.columns ?? []) {
+          const existing = unqualifiedColumns.get(column.name);
+          unqualifiedColumns.set(column.name, {
+            label: column.name,
+            type: "property",
+            detail: existing ? "多表字段" : `${table} · ${column.columnType ?? "字段"}`,
+            apply: column.name,
+          });
+          completions.push({
+            label: `${table}.${column.name}`,
+            type: "property",
+            detail: column.columnType ?? "字段",
+            apply: `${table}.${column.name}`,
+          });
+        }
+      } catch {
+        // 单表字段加载失败不影响其他提示。
+      }
+    }
+  });
+
+  await Promise.all(workers);
+  queryColumnCompletionsBySchema.value = {
+    ...queryColumnCompletionsBySchema.value,
+    [cacheKey]: [...unqualifiedColumns.values(), ...completions],
+  };
+  if (props.activeTopTab?.kind === "query" && props.activeTopTab.schema === schemaName) {
+    queryEditorView.value?.dispatch({ effects: [] });
+  }
+}
+
+async function ensureQueryEditorModules() {
+  if (queryEditorModules) {
+    return queryEditorModules;
+  }
+
+  queryEditorModulesPromise ??= Promise.all([
+    import("codemirror"),
+    import("@codemirror/state"),
+    import("@codemirror/view"),
+    import("@codemirror/lang-sql"),
+    import("@codemirror/autocomplete"),
+  ]).then(([codemirror, stateModule, viewModule, sqlModule, autocompleteModule]) => ({
+    basicSetup: codemirror.basicSetup,
+    StateField: stateModule.StateField,
+    EditorView: codemirror.EditorView,
+    Decoration: viewModule.Decoration,
+    sql: sqlModule.sql,
+    autocompletion: autocompleteModule.autocompletion,
+  }));
+  queryEditorModules = await queryEditorModulesPromise;
+  return queryEditorModules;
+}
+
+async function createQueryEditor() {
+  if (!queryEditorRoot.value || queryEditorView.value) {
+    return;
+  }
+
+  const { basicSetup, EditorView, StateField, Decoration, sql, autocompletion } = await ensureQueryEditorModules();
+  if (!queryEditorRoot.value || queryEditorView.value) {
+    return;
+  }
+
+  const selectedTextDecoration = Decoration.mark({ class: "query-selected-text" });
+  const selectedTextField = StateField.define({
+    create(state) {
+      return selectedTextDecorations(state);
+    },
+    update(decorations, transaction) {
+      if (!transaction.docChanged && !transaction.selection) {
+        return decorations.map(transaction.changes);
+      }
+      return selectedTextDecorations(transaction.state);
+    },
+    provide(field) {
+      return EditorView.decorations.from(field);
+    },
+  });
+
+  function selectedTextDecorations(state) {
+    const ranges = [];
+    for (const range of state.selection.ranges) {
+      if (!range.empty) {
+        ranges.push(selectedTextDecoration.range(range.from, range.to));
+      }
+    }
+    return Decoration.set(ranges, true);
+  }
+
+  queryEditorView.value = new EditorView({
+    doc: activeQueryText.value,
+    parent: queryEditorRoot.value,
+    extensions: [
+      basicSetup,
+      sql({ upperCaseKeywords: true }),
+      autocompletion({
+        override: [queryCompletionSource],
+      }),
+      selectedTextField,
+      EditorView.lineWrapping,
+      EditorView.updateListener.of((update) => {
+        if (update.docChanged && !applyingQueryEditorContent) {
+          activeQueryText.value = update.state.doc.toString();
+        }
+        if (update.docChanged || update.selectionSet) {
+          updateQuerySelection();
+        }
+      }),
+      EditorView.theme({
+        "&": {
+          height: "100%",
+          backgroundColor: "#fff",
+          color: "#24262d",
+          fontSize: "13px",
+        },
+        ".cm-scroller": {
+          fontFamily: '"SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace',
+          lineHeight: "1.6",
+        },
+        ".cm-content": {
+          padding: "8px 0",
+        },
+        ".cm-line": {
+          padding: "0 12px",
+        },
+        ".cm-gutters": {
+          backgroundColor: "#f7f7f8",
+          borderRight: "1px solid #dedfe3",
+          color: "#9aa0aa",
+        },
+        ".cm-activeLine": {
+          backgroundColor: "#fff7f4",
+        },
+        ".cm-activeLineGutter": {
+          backgroundColor: "#fff0eb",
+          color: "#686d78",
+        },
+        ".cm-selectionBackground, &.cm-focused .cm-selectionBackground": {
+          backgroundColor: "#ffc7b3",
+        },
+        ".cm-selectionMatch": {
+          backgroundColor: "#fff0eb",
+          outline: "1px solid #f5c5b3",
+        },
+        "&.cm-focused .cm-selectionLayer .cm-selectionBackground": {
+          boxShadow: "inset 0 -1px 0 #f26b3a",
+        },
+        "&.cm-focused": {
+          outline: "none",
+        },
+      }),
+    ],
+  });
+  queryEditorReady.value = true;
+  updateQuerySelection();
+}
+
+function syncQueryEditorContent(content) {
+  if (!queryEditorView.value || queryEditorView.value.state.doc.toString() === content) {
+    return;
+  }
+
+  applyingQueryEditorContent = true;
+  queryEditorView.value.dispatch({
+    changes: { from: 0, to: queryEditorView.value.state.doc.length, insert: content },
+  });
+  applyingQueryEditorContent = false;
+}
+
+function destroyQueryEditor() {
+  queryEditorView.value?.destroy();
+  queryEditorView.value = null;
+  queryEditorReady.value = false;
+  querySelection.value = { start: 0, end: 0 };
+}
+
+function selectedQueryText() {
+  const view = queryEditorView.value;
+  if (!view || props.activeTopTab?.kind !== "query") {
+    return "";
+  }
+
+  return view.state.selection.ranges
+    .filter((range) => !range.empty)
+    .map((range) => view.state.doc.sliceString(range.from, range.to))
+    .join("\n");
+}
+
+function updateQuerySelection() {
+  const ranges = queryEditorView.value?.state.selection.ranges ?? [];
+  const firstRange = ranges[0];
+  querySelection.value = {
+    start: firstRange?.from ?? 0,
+    end: firstRange?.to ?? 0,
+  };
 }
 
 function schemaTableCountKey(schema, table) {
@@ -430,7 +820,7 @@ function rowMatchesSearch(row, columns, query, valueGetter) {
 }
 
 async function openTableSearch() {
-  if (!props.activeTopTab || !["schema", "table"].includes(props.activeTopTab.kind)) {
+  if (!props.activeTopTab || !["schema", "table", "query"].includes(props.activeTopTab.kind)) {
     return;
   }
 
@@ -556,15 +946,28 @@ function handleCopyContextSelect(item) {
 
 function handleKeydown(event) {
   const isFindShortcut = (event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "f";
-  if (isFindShortcut && props.activeTopTab && ["schema", "table"].includes(props.activeTopTab.kind)) {
+  if (isFindShortcut && props.activeTopTab && ["schema", "table", "query"].includes(props.activeTopTab.kind)) {
     event.preventDefault();
     openTableSearch();
     return;
   }
 
+  const isRunShortcut = (event.ctrlKey || event.metaKey) && event.key === "Enter";
+  if (isRunShortcut && props.activeTopTab?.kind === "query") {
+    event.preventDefault();
+    executeActiveQuery();
+    return;
+  }
+
+  const target = event.target;
+  const isEditingText = target instanceof HTMLElement && Boolean(target.closest("input, textarea, [contenteditable='true']"));
   const isCopyShortcut = (event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "c";
   const isPasteShortcut = (event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "v";
   if (!isCopyShortcut && !isPasteShortcut) {
+    return;
+  }
+
+  if (isEditingText) {
     return;
   }
 
@@ -637,6 +1040,10 @@ function selectedCopyText() {
   }
 
   if (props.activeTopTab?.kind === "table") {
+    return selectedResultCopyText();
+  }
+
+  if (props.activeTopTab?.kind === "query") {
     return selectedResultCopyText();
   }
 
@@ -868,6 +1275,7 @@ onMounted(() => {
 
 onBeforeUnmount(() => {
   saveTabViewState();
+  destroyQueryEditor();
   tableResizeObserver?.disconnect();
   window.removeEventListener("mouseup", stopSchemaRowSelection);
   window.removeEventListener("mouseup", stopSchemaCellSelection);
@@ -917,6 +1325,45 @@ async function loadTableData(schema, table, tabId = props.activeTopTab?.id, opti
     saveTabViewState(tabId);
   } catch (error) {
     ElMessage.error(`加载表数据失败：${error}`);
+  } finally {
+    loading.value = false;
+  }
+}
+
+async function executeActiveQuery() {
+  const tab = props.activeTopTab;
+  if (!tab || tab.kind !== "query") {
+    return;
+  }
+
+  const selectedSql = selectedQueryText().trim();
+  const sql = (selectedSql || activeQueryText.value).trim();
+  if (!sql) {
+    ElMessage.warning("请输入 SQL");
+    return;
+  }
+
+  loading.value = true;
+  try {
+    const result = await executeMysqlQuery(currentConfig(), tab.schema, sql);
+    tableResults.value = {
+      ...tableResults.value,
+      [tab.id]: {
+        ...result,
+        schema: tab.schema,
+        table: null,
+        page: 1,
+        pageSize: result.rows?.length ?? 0,
+        totalRows: result.rows?.length ?? 0,
+      },
+    };
+    await nextTick();
+    clearResultRowSelection();
+    clearResultCellSelection();
+    resetTableScroll();
+    saveTabViewState(tab.id);
+  } catch (error) {
+    ElMessage.error(`执行查询失败：${error}`);
   } finally {
     loading.value = false;
   }
@@ -1129,14 +1576,50 @@ function handlePageChange(page) {
         </div>
       </section>
 
-      <section v-else-if="activeTopTab.kind === 'table'" class="tab-content has-footer">
+      <section
+        v-else-if="['table', 'query'].includes(activeTopTab.kind)"
+        class="tab-content has-footer"
+        :class="{ 'query-tab': activeTopTab.kind === 'query' }"
+      >
+        <div v-if="activeTopTab.kind === 'query'" class="query-editor">
+          <div class="query-editor__bar">
+            <el-select
+              v-model="activeQuerySchemaName"
+              class="query-schema-select"
+              size="small"
+              filterable
+              clearable
+              placeholder="选择库"
+              no-match-text="没有匹配的库"
+              no-data-text="暂无库"
+              popper-class="query-schema-select-popper"
+              :disabled="querySchemaOptions.length === 0"
+            >
+              <el-option
+                v-for="schema in querySchemaOptions"
+                :key="schema"
+                :label="schema"
+                :value="schema"
+              />
+            </el-select>
+            <el-button
+              class="query-run-button"
+              :icon="VideoPlay"
+              size="small"
+              @click="executeActiveQuery"
+            >
+              {{ queryRunLabel }}
+            </el-button>
+          </div>
+          <div ref="queryEditorRoot" class="query-editor__host" :class="{ ready: queryEditorReady }" />
+        </div>
         <div v-if="tableSearchOpen" class="table-search">
           <el-icon><Search /></el-icon>
           <input
             ref="searchInputRef"
             v-model="tableSearchQuery"
             type="search"
-            placeholder="搜索当前页数据"
+            :placeholder="activeTopTab.kind === 'query' ? '搜索查询结果' : '搜索当前页数据'"
             @keydown="handleSearchKeydown"
           />
           <span>{{ searchedResultRows.length }} / {{ activeResult?.rows.length ?? 0 }}</span>
@@ -1209,9 +1692,15 @@ function handlePageChange(page) {
         </div>
         <footer class="table-footer">
           <span v-if="activeResult" class="table-footer__summary">
-            第 {{ activeResult.page }} 页 · 显示 {{ searchedResultRows.length }} / {{ activeResult.totalRows }} 行 · {{ activeResult.elapsedMs }}ms
+            <template v-if="activeTopTab.kind === 'table'">
+              第 {{ activeResult.page }} 页 · 显示 {{ searchedResultRows.length }} / {{ activeResult.totalRows }} 行 · {{ activeResult.elapsedMs }}ms
+            </template>
+            <template v-else>
+              显示 {{ searchedResultRows.length }} / {{ activeResult.totalRows }} 行 · {{ activeResult.elapsedMs }}ms
+            </template>
           </span>
           <el-pagination
+            v-if="activeTopTab.kind === 'table'"
             background
             layout="sizes, prev, pager, next, jumper"
             popper-class="table-page-size-popper"
@@ -1407,6 +1896,112 @@ function handlePageChange(page) {
   border-radius: 10px;
   background: #fff;
   box-shadow: none;
+}
+
+.query-editor {
+  display: flex;
+  flex: 0 0 238px;
+  min-height: 160px;
+  flex-direction: column;
+  border-bottom: 1px solid var(--line);
+  background: var(--panel);
+}
+
+.query-editor__bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 38px;
+  padding: 0 8px 0 10px;
+  border-bottom: 1px solid var(--line);
+  background: var(--surface-muted);
+}
+
+.query-editor__bar :deep(.query-schema-select) {
+  width: min(220px, 48%);
+}
+
+.query-editor__bar :deep(.query-schema-select .el-select__wrapper) {
+  min-height: 28px;
+  border-radius: 7px;
+  background: #fff;
+  box-shadow: 0 0 0 1px var(--line) inset;
+}
+
+.query-editor__bar :deep(.query-schema-select .el-select__wrapper:hover) {
+  box-shadow: 0 0 0 1px var(--line-strong) inset;
+}
+
+.query-editor__bar :deep(.query-schema-select .el-select__wrapper.is-focused) {
+  box-shadow: 0 0 0 1px var(--orange) inset, 0 0 0 3px rgba(242, 107, 58, 0.10);
+}
+
+.query-editor__bar :deep(.query-schema-select .el-select__selected-item),
+.query-editor__bar :deep(.query-schema-select .el-input__inner) {
+  color: var(--muted);
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  font-size: 12px;
+}
+
+.query-editor__bar :deep(.query-run-button) {
+  height: 28px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: #fff;
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 650;
+  box-shadow: none;
+}
+
+.query-editor__bar :deep(.query-run-button:hover) {
+  border-color: var(--line-strong);
+  background: var(--surface-strong);
+  color: var(--text);
+}
+
+.query-editor__bar :deep(.query-run-button:active) {
+  border-color: #f5c5b3;
+  background: var(--orange-soft);
+  color: var(--orange);
+}
+
+.query-editor__bar :deep(.query-run-button .el-icon) {
+  color: var(--orange);
+}
+
+.query-editor__host {
+  min-height: 0;
+  flex: 1;
+  width: 100%;
+  overflow: hidden;
+  background: #fff;
+}
+
+.query-editor__host :deep(.cm-editor) {
+  height: 100%;
+}
+
+.query-editor__host :deep(.query-selected-text) {
+  border-radius: 3px;
+  background: #ffc7b3;
+  color: var(--text);
+}
+
+.query-editor__host :deep(.cm-tooltip),
+.query-editor__host :deep(.cm-tooltip-autocomplete) {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+  box-shadow: var(--shadow-card);
+  color: var(--text);
+  font-family: var(--app-font);
+  font-size: 12px;
+}
+
+.query-editor__host :deep(.cm-tooltip-autocomplete ul li[aria-selected]) {
+  background: var(--surface-strong);
+  color: var(--text);
 }
 
 .table-search {

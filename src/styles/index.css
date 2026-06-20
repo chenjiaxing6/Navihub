@@ -84,12 +84,6 @@ select,
   font-weight: 800;
 }
 
-.node-icon.mysql,
-.node-icon.postgres {
-  background: #343741;
-  color: #fff;
-}
-
 .node-icon.ssh {
   background: #374151;
   color: #fff;
@@ -218,6 +212,66 @@ select,
 }
 
 .table-page-size-popper .el-popper__arrow::before {
+  border-color: var(--line);
+  background: #fff;
+}
+
+.el-select__popper.query-schema-select-popper.el-popper {
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+  box-shadow: var(--shadow-card);
+}
+
+.query-schema-select-popper .el-select-dropdown {
+  background: #fff;
+}
+
+.query-schema-select-popper .el-select-dropdown__wrap {
+  max-height: 260px;
+}
+
+.query-schema-select-popper .el-select-dropdown__list {
+  padding: 4px;
+}
+
+.query-schema-select-popper .el-select-dropdown__item {
+  display: flex;
+  align-items: center;
+  height: 28px;
+  min-height: 28px;
+  padding: 0 8px;
+  border-radius: 6px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.query-schema-select-popper .el-select-dropdown__item span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.query-schema-select-popper .el-select-dropdown__item.is-hovering {
+  background: var(--surface-strong);
+  color: var(--text);
+}
+
+.query-schema-select-popper .el-select-dropdown__item.is-selected {
+  background: var(--orange-soft);
+  color: var(--orange);
+  font-weight: 650;
+}
+
+.query-schema-select-popper .el-select-dropdown__empty {
+  padding: 10px 8px;
+  color: var(--faint);
+  font-size: 12px;
+}
+
+.query-schema-select-popper .el-popper__arrow::before {
   border-color: var(--line);
   background: #fff;
 }

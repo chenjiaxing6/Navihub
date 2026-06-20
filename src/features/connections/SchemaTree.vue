@@ -1,5 +1,6 @@
 <script setup>
 import { computed, ref, watch } from "vue";
+import ContextMenu from "../../shared/ContextMenu.vue";
 
 const props = defineProps({
   connectionId: { type: String, required: true },
@@ -10,9 +11,12 @@ const props = defineProps({
   loading: { type: Boolean, default: false },
 });
 
-const emit = defineEmits(["activate-schema", "open-schema", "open-table-query"]);
+const emit = defineEmits(["activate-schema", "create-query", "open-schema", "open-table-query"]);
 const selectedKey = ref("");
 const openGroupKeys = ref(new Set());
+const schemaContextOpen = ref(false);
+const schemaContextPosition = ref({ x: 0, y: 0 });
+const contextSchema = ref(null);
 const normalizedSearch = computed(() => props.searchQuery.trim().toLowerCase());
 const hasSearch = computed(() => Boolean(normalizedSearch.value));
 const filteredSchemas = computed(() => {
@@ -107,6 +111,20 @@ function selectOnly(key) {
   selectedKey.value = key;
 }
 
+function openSchemaContextMenu(event, schema) {
+  event.preventDefault();
+  contextSchema.value = schema;
+  selectedKey.value = schemaKey(schema);
+  schemaContextPosition.value = { x: event.clientX, y: event.clientY };
+  schemaContextOpen.value = true;
+}
+
+function handleSchemaContextSelect(item) {
+  if (item.key === "create-query" && contextSchema.value) {
+    emit("create-query", { schema: contextSchema.value });
+  }
+}
+
 function itemName(item) {
   return typeof item === "string" ? item : item.name;
 }
@@ -135,6 +153,7 @@ function includesQuery(value, query) {
           if (isSchemaOpen(schema)) emit('activate-schema', { schema });
         }"
         @dblclick.prevent="emit('open-schema', { schema })"
+        @contextmenu.prevent="openSchemaContextMenu($event, schema)"
       >
         <span class="schema-icon" />
         <span>{{ schema.name }}</span>
@@ -169,6 +188,14 @@ function includesQuery(value, query) {
         </button>
       </details>
     </details>
+
+    <ContextMenu
+      v-model="schemaContextOpen"
+      :items="[{ key: 'create-query', label: '新建查询' }]"
+      :x="schemaContextPosition.x"
+      :y="schemaContextPosition.y"
+      @select="handleSchemaContextSelect"
+    />
   </div>
 </template>
 

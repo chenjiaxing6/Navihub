@@ -1,5 +1,5 @@
 <script setup>
-import { computed, ref, watch } from "vue";
+import { computed, onBeforeUnmount, ref, watch } from "vue";
 import { FolderAdd, Plus } from "@element-plus/icons-vue";
 import ModuleRail from "./ModuleRail.vue";
 import WorkspaceTabs from "./WorkspaceTabs.vue";
@@ -47,7 +47,9 @@ const emit = defineEmits([
   "move-connection-to-folder",
   "update-mysql-connection",
   "schema-loaded",
+  "create-query",
   "open-table-query",
+  "update-query-schema",
   "update-ssh-state",
   "open-settings",
 ]);
@@ -56,14 +58,74 @@ const currentWorkspace = computed(() =>
   workspaces.find((workspace) => workspace.id === activeWorkspace.value) ?? workspaces[0],
 );
 const searchQuery = ref("");
+const sidebarWidths = ref({
+  database: 316,
+  ssh: 316,
+});
+const resizingSidebar = ref(null);
+const SIDEBAR_MIN_WIDTH = 240;
+const SIDEBAR_MAX_WIDTH = 520;
+const RAIL_WIDTH = 56;
+const WORKSPACE_MIN_WIDTH = 720;
+
+const activeSidebarWidth = computed(() => sidebarWidths.value[activeWorkspace.value] ?? sidebarWidths.value.database);
+const shellGridColumns = computed(() => `${RAIL_WIDTH}px ${activeSidebarWidth.value}px minmax(0, 1fr)`);
 
 watch(activeWorkspace, () => {
   searchQuery.value = "";
 });
+
+onBeforeUnmount(() => {
+  stopSidebarResize();
+});
+
+function clampSidebarWidth(width) {
+  const viewportMax = window.innerWidth - RAIL_WIDTH - WORKSPACE_MIN_WIDTH;
+  const maxWidth = Math.max(SIDEBAR_MIN_WIDTH, Math.min(SIDEBAR_MAX_WIDTH, viewportMax));
+  return Math.min(Math.max(width, SIDEBAR_MIN_WIDTH), maxWidth);
+}
+
+function startSidebarResize(event) {
+  if (event.button != null && event.button !== 0) {
+    return;
+  }
+
+  resizingSidebar.value = {
+    workspace: activeWorkspace.value,
+    startX: event.clientX,
+    startWidth: activeSidebarWidth.value,
+  };
+  document.body.classList.add("is-resizing-sidebar");
+  window.addEventListener("pointermove", resizeSidebar);
+  window.addEventListener("pointerup", stopSidebarResize);
+}
+
+function resizeSidebar(event) {
+  if (!resizingSidebar.value) {
+    return;
+  }
+
+  const { workspace, startX, startWidth } = resizingSidebar.value;
+  sidebarWidths.value = {
+    ...sidebarWidths.value,
+    [workspace]: clampSidebarWidth(startWidth + event.clientX - startX),
+  };
+}
+
+function stopSidebarResize() {
+  if (!resizingSidebar.value) {
+    return;
+  }
+
+  resizingSidebar.value = null;
+  document.body.classList.remove("is-resizing-sidebar");
+  window.removeEventListener("pointermove", resizeSidebar);
+  window.removeEventListener("pointerup", stopSidebarResize);
+}
 </script>
 
 <template>
-  <main class="app-shell">
+  <main class="app-shell" :style="{ gridTemplateColumns: shellGridColumns }">
     <ModuleRail
       :active-workspace="activeWorkspace"
       @open-settings="emit('open-settings')"
@@ -102,6 +164,7 @@ watch(activeWorkspace, () => {
         @delete-folder="emit('delete-connection-folder', $event)"
         @duplicate-connection="emit('duplicate-connection', $event)"
         @edit-connection="emit('edit-connection', $event)"
+        @create-query="emit('create-query', $event)"
         @move-connection-to-folder="emit('move-connection-to-folder', $event)"
         @open-schema="emit('open-schema', $event)"
         @open-table-query="emit('open-table-query', $event)"
@@ -109,6 +172,16 @@ watch(activeWorkspace, () => {
         @rename-folder="emit('rename-connection-folder', $event)"
         @select-connection="emit('select-connection', $event)"
         @open-connection="emit('open-connection', $event)"
+      />
+      <div
+        class="sidebar-resizer"
+        role="separator"
+        aria-label="调整连接区宽度"
+        aria-orientation="vertical"
+        :aria-valuemin="SIDEBAR_MIN_WIDTH"
+        :aria-valuemax="SIDEBAR_MAX_WIDTH"
+        :aria-valuenow="activeSidebarWidth"
+        @pointerdown.prevent="startSidebarResize"
       />
     </aside>
 
@@ -130,6 +203,7 @@ watch(activeWorkspace, () => {
         @open-table-query="emit('open-table-query', $event)"
         @schema-loaded="emit('schema-loaded', $event)"
         @update-connection="emit('update-mysql-connection', $event)"
+        @update-query-schema="emit('update-query-schema', $event)"
       />
       <SshWorkspace
         v-else-if="activeWorkspace === 'ssh'"
@@ -144,7 +218,6 @@ watch(activeWorkspace, () => {
 <style scoped>
 .app-shell {
   display: grid;
-  grid-template-columns: 56px 316px 1fr;
   width: 100vw;
   height: 100vh;
   overflow: hidden;
@@ -153,6 +226,7 @@ watch(activeWorkspace, () => {
 }
 
 .sidebar {
+  position: relative;
   display: flex;
   min-width: 0;
   flex-direction: column;
@@ -162,6 +236,50 @@ watch(activeWorkspace, () => {
   background: var(--sidebar-bg);
   box-shadow: none;
   backdrop-filter: none;
+}
+
+.sidebar-resizer {
+  position: absolute;
+  top: 0;
+  right: -4px;
+  bottom: 0;
+  z-index: 2;
+  width: 8px;
+  background: transparent;
+  cursor: col-resize;
+}
+
+.sidebar-resizer::before {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 3px;
+  width: 1px;
+  background: transparent;
+  content: "";
+  transition: background 0.14s ease;
+}
+
+.sidebar-resizer::after {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 2px;
+  width: 3px;
+  background: var(--orange);
+  opacity: 0;
+  content: "";
+  transition: opacity 0.14s ease;
+}
+
+.sidebar-resizer:hover::after,
+:global(body.is-resizing-sidebar) .sidebar-resizer::after {
+  opacity: 0.75;
+}
+
+.sidebar-resizer:hover::before,
+:global(body.is-resizing-sidebar) .sidebar-resizer::before {
+  background: var(--orange-soft);
 }
 
 .sidebar__header {
@@ -241,6 +359,11 @@ watch(activeWorkspace, () => {
   background: var(--panel);
   box-shadow: none;
   backdrop-filter: none;
+}
+
+:global(body.is-resizing-sidebar) {
+  cursor: col-resize;
+  user-select: none;
 }
 
 </style>

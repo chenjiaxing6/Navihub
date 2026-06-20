@@ -503,6 +503,33 @@ function openTableQuery(payload) {
   };
 }
 
+function createQuery(payload) {
+  selectConnection(payload.connection);
+  activeSchemaConnectionId.value = payload.connection.id;
+  const schemaName = payload.schema?.name ?? payload.schema;
+  const createdAt = Date.now();
+  const tab = {
+    id: `query-${createdAt}-${Math.random().toString(16).slice(2)}`,
+    key: `query:${payload.connection.id}:${schemaName}:${createdAt}`,
+    label: "新建查询",
+    workspace: "database",
+    closable: true,
+    kind: "query",
+    connectionId: payload.connection.id,
+    schema: schemaName,
+  };
+  dynamicTabs.value = [...dynamicTabs.value, tab];
+  activeTopTabId.value = tab.id;
+}
+
+function updateQuerySchema(payload) {
+  dynamicTabs.value = dynamicTabs.value.map((tab) =>
+    tab.id === payload.tabId && tab.kind === "query"
+      ? { ...tab, schema: payload.schema }
+      : tab,
+  );
+}
+
 function openSchema(payload) {
   selectConnection(payload.connection);
   activeSchemaConnectionId.value = payload.connection.id;
@@ -665,6 +692,7 @@ function closeTopTab(tabId) {
     @close-top-tabs="closeTopTabs"
     @create-connection="openCreateConnection"
     @create-connection-folder="createConnectionFolder"
+    @create-query="createQuery"
     @delete-connection="deleteConnection"
     @delete-connection-folder="deleteConnectionFolder"
     @duplicate-connection="duplicateConnection"
@@ -681,6 +709,7 @@ function closeTopTab(tabId) {
     @select-top-tab="selectTopTab"
     @schema-loaded="handleSchemaLoaded"
     @update-mysql-connection="updateMysqlConnection"
+    @update-query-schema="updateQuerySchema"
     @update-ssh-state="updateSshState"
   />
 

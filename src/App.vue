@@ -68,10 +68,13 @@ function normalizeConnection(connection, index = 0) {
 }
 
 const activeWorkspace = ref("database");
-const activeConnectionId = ref("prod");
-const activeSchemaConnectionId = ref(null);
 const connectionList = ref(loadConnections());
 const connectionFolders = ref(loadConnectionFolders());
+const activeConnectionIds = ref({
+  database: connectionList.value.find((connection) => connection.workspace === "database")?.id ?? "",
+  ssh: connectionList.value.find((connection) => connection.workspace === "ssh")?.id ?? "",
+});
+const activeSchemaConnectionId = ref(null);
 const pendingTableQuery = ref(null);
 const pendingSchemaOpen = ref(null);
 const connectionDialogVisible = ref(false);
@@ -79,7 +82,9 @@ const settingsDialogVisible = ref(false);
 const editingConnection = ref(null);
 const pendingConnectionFolderId = ref(null);
 const dynamicTabs = ref([]);
-const activeTopTabId = ref(null);
+const activeTopTabIds = ref({
+  database: null,
+});
 const openSchemaKeys = ref([]);
 const schemaOpenVersions = ref({});
 const appSettings = ref(loadSettings());
@@ -98,10 +103,64 @@ const activeConnection = computed(() =>
     null,
 );
 
-const topTabs = computed(() => dynamicTabs.value);
+const activeConnectionId = computed({
+  get() {
+    return activeConnectionIds.value[activeWorkspace.value] ?? "";
+  },
+  set(connectionId) {
+    activeConnectionIds.value = {
+      ...activeConnectionIds.value,
+      [activeWorkspace.value]: connectionId,
+    };
+  },
+});
+
+const topTabs = computed(() => dynamicTabs.value.filter((tab) => tab.workspace === activeWorkspace.value));
 
 const activeTopTab = computed(() => topTabs.value.find((tab) => tab.id === activeTopTabId.value) ?? null);
+const activeTopTabId = computed({
+  get() {
+    return activeTopTabIds.value[activeWorkspace.value] ?? null;
+  },
+  set(tabId) {
+    setWorkspaceActiveTopTabId(activeWorkspace.value, tabId);
+  },
+});
+const databaseConnection = computed(() => {
+  const databaseConnections = connectionList.value.filter((connection) => connection.workspace === "database");
+  return databaseConnections.find((connection) => connection.id === activeConnectionIds.value.database) ??
+    databaseConnections[0] ??
+    null;
+});
+const sshConnection = computed(() => {
+  const sshConnections = connectionList.value.filter((connection) => connection.workspace === "ssh");
+  return sshConnections.find((connection) => connection.id === activeConnectionIds.value.ssh) ??
+    sshConnections[0] ??
+    null;
+});
+const databaseActiveTopTab = computed(() =>
+  dynamicTabs.value.find((tab) => tab.workspace === "database" && tab.id === activeTopTabIds.value.database) ?? null,
+);
 const terminalTheme = computed(() => getTerminalTheme(appSettings.value.terminalThemeId));
+
+function setWorkspaceActiveConnectionId(workspace, connectionId) {
+  activeConnectionIds.value = {
+    ...activeConnectionIds.value,
+    [workspace]: connectionId,
+  };
+}
+
+function setWorkspaceActiveTopTabId(workspace, tabId) {
+  activeTopTabIds.value = {
+    ...activeTopTabIds.value,
+    [workspace]: tabId,
+  };
+}
+
+function getLastWorkspaceTab(workspace) {
+  const workspaceTabs = dynamicTabs.value.filter((tab) => tab.workspace === workspace);
+  return workspaceTabs[workspaceTabs.length - 1] ?? null;
+}
 
 watch(
   connectionList,
@@ -129,21 +188,18 @@ watch(
 
 function setWorkspace(workspace) {
   activeWorkspace.value = workspace;
-  activeTopTabId.value = null;
-  activeSchemaConnectionId.value = null;
 
-  const firstConnection = connectionList.value.find((connection) => connection.workspace === workspace);
-  if (firstConnection) {
-    activeConnectionId.value = firstConnection.id;
+  if (!activeConnectionIds.value[workspace]) {
+    const firstConnection = connectionList.value.find((connection) => connection.workspace === workspace);
+    if (firstConnection) {
+      setWorkspaceActiveConnectionId(workspace, firstConnection.id);
+    }
   }
 }
 
 function selectConnection(connection) {
-  activeConnectionId.value = connection.id;
   activeWorkspace.value = connection.workspace;
-  if (connection.workspace !== "database") {
-    activeTopTabId.value = null;
-  }
+  setWorkspaceActiveConnectionId(connection.workspace, connection.id);
 }
 
 async function openConnection(connection) {
@@ -221,7 +277,7 @@ async function refreshConnection(connection) {
       return nextSchema ? { ...tab, schema: nextSchema } : tab;
     });
     activeWorkspace.value = "database";
-    activeConnectionId.value = connection.id;
+    setWorkspaceActiveConnectionId("database", connection.id);
     activeSchemaConnectionId.value = connection.id;
     const nextSchemaOpenVersions = { ...schemaOpenVersions.value };
     for (const key of openSchemaKeys.value.filter((item) => item.startsWith(`schema:${connection.id}:`))) {
@@ -236,7 +292,7 @@ async function refreshConnection(connection) {
 
 function updateMysqlConnection(payload) {
   connectionList.value = connectionList.value.map((connection) => {
-    if (connection.id !== activeConnectionId.value) {
+    if (connection.id !== activeConnectionIds.value.database) {
       return connection;
     }
 
@@ -263,7 +319,7 @@ function updateSshState(payload) {
 
 function handleSchemaLoaded(payload) {
   activeWorkspace.value = "database";
-  activeConnectionId.value = payload.connectionId;
+  setWorkspaceActiveConnectionId("database", payload.connectionId);
   activeSchemaConnectionId.value = payload.connectionId;
   connectionList.value = connectionList.value.map((connection) =>
     connection.id === payload.connectionId ? { ...connection, status: "connected" } : connection,
@@ -291,7 +347,7 @@ function createConnection(payload) {
 
   connectionList.value = [...connectionList.value, connection];
   activeWorkspace.value = connection.workspace;
-  activeConnectionId.value = connection.id;
+  setWorkspaceActiveConnectionId(connection.workspace, connection.id);
   activeSchemaConnectionId.value = null;
   pendingConnectionFolderId.value = null;
   connectionDialogVisible.value = false;
@@ -396,7 +452,7 @@ function openEditConnection(connection) {
     config: { ...(connection.config ?? {}) },
   };
   activeWorkspace.value = connection.workspace;
-  activeConnectionId.value = connection.id;
+  setWorkspaceActiveConnectionId(connection.workspace, connection.id);
   connectionDialogVisible.value = true;
 }
 
@@ -421,7 +477,7 @@ function updateConnection(payload) {
     };
   });
   activeWorkspace.value = editing.workspace;
-  activeConnectionId.value = editing.id;
+  setWorkspaceActiveConnectionId(editing.workspace, editing.id);
   editingConnection.value = null;
   pendingConnectionFolderId.value = null;
   connectionDialogVisible.value = false;
@@ -446,12 +502,8 @@ async function deleteConnection(connection) {
   );
 
   connectionList.value = connectionList.value.filter((item) => item.id !== connection.id);
-  const next = connectionList.value.find((item) => item.workspace === activeWorkspace.value);
-  if (next) {
-    activeConnectionId.value = next.id;
-  } else {
-    activeConnectionId.value = "";
-  }
+  const next = connectionList.value.find((item) => item.workspace === connection.workspace);
+  setWorkspaceActiveConnectionId(connection.workspace, next?.id ?? "");
   activeSchemaConnectionId.value = activeSchemaConnectionId.value === connection.id ? null : activeSchemaConnectionId.value;
   closeConnectionTabs(connection.id);
 }
@@ -468,7 +520,7 @@ function duplicateConnection(connection) {
   });
 
   connectionList.value = [...connectionList.value, duplicate];
-  activeConnectionId.value = duplicate.id;
+  setWorkspaceActiveConnectionId(duplicate.workspace, duplicate.id);
   activeSchemaConnectionId.value = null;
 }
 
@@ -478,7 +530,7 @@ function openTableQuery(payload) {
   const tabKey = `table:${payload.connection.id}:${payload.schema}:${payload.item}`;
   const existing = dynamicTabs.value.find((tab) => tab.key === tabKey);
   if (existing) {
-    activeTopTabId.value = existing.id;
+    setWorkspaceActiveTopTabId("database", existing.id);
     return;
   }
 
@@ -494,7 +546,7 @@ function openTableQuery(payload) {
     table: payload.item,
   };
   dynamicTabs.value = [...dynamicTabs.value, tab];
-  activeTopTabId.value = tab.id;
+  setWorkspaceActiveTopTabId("database", tab.id);
   pendingTableQuery.value = {
     id: Date.now(),
     schema: payload.schema,
@@ -519,7 +571,7 @@ function createQuery(payload) {
     schema: schemaName,
   };
   dynamicTabs.value = [...dynamicTabs.value, tab];
-  activeTopTabId.value = tab.id;
+  setWorkspaceActiveTopTabId("database", tab.id);
 }
 
 function updateQuerySchema(payload) {
@@ -541,15 +593,15 @@ function openSchema(payload) {
     openSchemaKeys.value = openSchemaKeys.value.filter((key) => key !== tabKey);
     if (existing) {
       dynamicTabs.value = dynamicTabs.value.filter((tab) => tab.id !== existing.id);
-      if (activeTopTabId.value === existing.id) {
-        activeTopTabId.value = null;
+      if (activeTopTabIds.value.database === existing.id) {
+        setWorkspaceActiveTopTabId("database", null);
       }
     }
     return;
   }
 
   if (existing) {
-    activeTopTabId.value = existing.id;
+    setWorkspaceActiveTopTabId("database", existing.id);
     openSchemaKeys.value = [...openSchemaKeys.value, tabKey];
     schemaOpenVersions.value = {
       ...schemaOpenVersions.value,
@@ -574,7 +626,7 @@ function openSchema(payload) {
     ...schemaOpenVersions.value,
     [tabKey]: (schemaOpenVersions.value[tabKey] ?? 0) + 1,
   };
-  activeTopTabId.value = tab.id;
+  setWorkspaceActiveTopTabId("database", tab.id);
   pendingSchemaOpen.value = {
     id: Date.now(),
     schema: payload.schema,
@@ -587,7 +639,7 @@ function activateSchema(payload) {
   if (existing) {
     selectConnection(payload.connection);
     activeSchemaConnectionId.value = payload.connection.id;
-    activeTopTabId.value = existing.id;
+    setWorkspaceActiveTopTabId("database", existing.id);
   }
 }
 
@@ -597,10 +649,10 @@ function selectTopTab(tabId) {
     return;
   }
 
-  activeTopTabId.value = tab.id;
   activeWorkspace.value = tab.workspace;
+  setWorkspaceActiveTopTabId(tab.workspace, tab.id);
   if (tab.connectionId) {
-    activeConnectionId.value = tab.connectionId;
+    setWorkspaceActiveConnectionId(tab.workspace, tab.connectionId);
   }
 }
 
@@ -618,12 +670,13 @@ function closeConnectionTabs(connectionId) {
   dynamicTabs.value = dynamicTabs.value.filter((tab) => !closingIds.has(tab.id));
   openSchemaKeys.value = openSchemaKeys.value.filter((key) => !key.startsWith(`schema:${connectionId}:`));
 
-  if (closingIds.has(activeTopTabId.value)) {
-    const nextTab = dynamicTabs.value[dynamicTabs.value.length - 1] ?? null;
-    activeTopTabId.value = nextTab?.id ?? null;
-    activeWorkspace.value = nextTab?.workspace ?? activeWorkspace.value;
-    if (nextTab?.connectionId) {
-      activeConnectionId.value = nextTab.connectionId;
+  for (const workspace of Object.keys(activeTopTabIds.value)) {
+    if (closingIds.has(activeTopTabIds.value[workspace])) {
+      const nextTab = getLastWorkspaceTab(workspace);
+      setWorkspaceActiveTopTabId(workspace, nextTab?.id ?? null);
+      if (nextTab?.connectionId) {
+        setWorkspaceActiveConnectionId(workspace, nextTab.connectionId);
+      }
     }
   }
 }
@@ -640,26 +693,28 @@ function closeTabsByIds(tabIds) {
     !closingTabs.some((tab) => tab.kind === "schema" && tab.key === key),
   );
 
-  if (closingIds.has(activeTopTabId.value)) {
-    const nextTab = dynamicTabs.value[dynamicTabs.value.length - 1] ?? null;
-    activeTopTabId.value = nextTab?.id ?? null;
-    activeWorkspace.value = nextTab?.workspace ?? activeWorkspace.value;
-    if (nextTab?.connectionId) {
-      activeConnectionId.value = nextTab.connectionId;
+  for (const workspace of Object.keys(activeTopTabIds.value)) {
+    if (closingIds.has(activeTopTabIds.value[workspace])) {
+      const nextTab = getLastWorkspaceTab(workspace);
+      setWorkspaceActiveTopTabId(workspace, nextTab?.id ?? null);
+      if (nextTab?.connectionId) {
+        setWorkspaceActiveConnectionId(workspace, nextTab.connectionId);
+      }
     }
   }
 }
 
 function closeTopTabs(payload) {
-  const index = dynamicTabs.value.findIndex((tab) => tab.id === payload.tabId);
+  const scopedTabs = dynamicTabs.value.filter((tab) => tab.workspace === activeWorkspace.value);
+  const index = scopedTabs.findIndex((tab) => tab.id === payload.tabId);
   if (index < 0) {
     return;
   }
 
   const tabsByScope = {
-    all: dynamicTabs.value,
-    left: dynamicTabs.value.slice(0, index),
-    right: dynamicTabs.value.slice(index + 1),
+    all: scopedTabs,
+    left: scopedTabs.slice(0, index),
+    right: scopedTabs.slice(index + 1),
   };
 
   closeTabsByIds((tabsByScope[payload.scope] ?? []).map((tab) => tab.id));
@@ -676,7 +731,10 @@ function closeTopTab(tabId) {
     :active-connection-id="activeConnectionId"
     :active-schema-connection-id="activeSchemaConnectionId"
     :active-connection="activeConnection"
+    :database-connection="databaseConnection"
+    :ssh-connection="sshConnection"
     :active-top-tab="activeTopTab"
+    :database-active-top-tab="databaseActiveTopTab"
     :active-top-tab-id="activeTopTabId"
     :open-schema-keys="openSchemaKeys"
     :schema-open-versions="schemaOpenVersions"

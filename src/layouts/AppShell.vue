@@ -14,7 +14,10 @@ const props = defineProps({
   activeConnectionId: { type: String, required: true },
   activeSchemaConnectionId: { type: String, default: null },
   activeConnection: { type: Object, default: null },
+  databaseConnection: { type: Object, default: null },
+  sshConnection: { type: Object, default: null },
   activeTopTab: { type: Object, default: null },
+  databaseActiveTopTab: { type: Object, default: null },
   activeTopTabId: { type: String, default: null },
   openSchemaKeys: { type: Array, default: () => [] },
   schemaOpenVersions: { type: Object, default: () => ({}) },
@@ -195,9 +198,9 @@ function stopSidebarResize() {
       />
 
       <DatabaseWorkspace
-        v-if="activeWorkspace === 'database'"
-        :connection="props.activeConnection"
-        :active-top-tab="props.activeTopTab"
+        v-show="activeWorkspace === 'database'"
+        :connection="props.databaseConnection"
+        :active-top-tab="props.databaseActiveTopTab"
         :pending-schema-open="props.pendingSchemaOpen"
         :pending-table-query="props.pendingTableQuery"
         @open-table-query="emit('open-table-query', $event)"
@@ -206,8 +209,8 @@ function stopSidebarResize() {
         @update-query-schema="emit('update-query-schema', $event)"
       />
       <SshWorkspace
-        v-else-if="activeWorkspace === 'ssh'"
-        :connection="props.activeConnection"
+        v-show="activeWorkspace === 'ssh'"
+        :connection="props.sshConnection"
         :terminal-theme="props.terminalTheme"
         @connection-state="emit('update-ssh-state', $event)"
       />

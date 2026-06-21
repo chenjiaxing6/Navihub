@@ -46,11 +46,13 @@ const emit = defineEmits([
   "open-schema",
   "refresh-connection",
   "rename-connection-folder",
+  "table-design-saved",
   "move-connection-to-folder",
   "update-mysql-connection",
   "schema-loaded",
   "create-query",
   "open-table-query",
+  "save-query",
   "update-query-schema",
   "update-ssh-state",
   "open-settings",
@@ -213,7 +215,10 @@ function stopSidebarResize() {
           :terminal-theme="props.terminalTheme"
           @connection-state="emit('update-ssh-state', $event)"
           @open-table-query="emit('open-table-query', $event)"
+          @refresh-connection="emit('refresh-connection', $event)"
+          @save-query="emit('save-query', $event)"
           @schema-loaded="emit('schema-loaded', $event)"
+          @table-design-saved="emit('table-design-saved', $event)"
           @update-connection="emit('update-mysql-connection', $event)"
           @update-query-schema="emit('update-query-schema', $event)"
         />

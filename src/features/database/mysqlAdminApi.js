@@ -21,6 +21,16 @@ export function createMysqlTable(config, database, table) {
   return invoke("mysql_create_table", { config, database, table });
 }
 
+export function copyMysqlTable(config, database, table, newTable, options = {}) {
+  return invoke("mysql_copy_table", {
+    config,
+    database,
+    table,
+    newTable,
+    copyData: Boolean(options.copyData),
+  });
+}
+
 export function renameMysqlTable(config, database, table, newTable) {
   return invoke("mysql_rename_table", { config, database, table, newTable });
 }

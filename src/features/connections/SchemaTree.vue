@@ -20,6 +20,9 @@ const contextSchema = ref(null);
 const objectContextOpen = ref(false);
 const objectContextPosition = ref({ x: 0, y: 0 });
 const contextObject = ref(null);
+const groupContextOpen = ref(false);
+const groupContextPosition = ref({ x: 0, y: 0 });
+const contextGroup = ref(null);
 const normalizedSearch = computed(() => props.searchQuery.trim().toLowerCase());
 const hasSearch = computed(() => Boolean(normalizedSearch.value));
 const filteredSchemas = computed(() => {
@@ -45,11 +48,16 @@ const filteredSchemas = computed(() => {
 });
 
 watch(
-  () => props.schemaOpenVersions,
-  () => {
-    openGroupKeys.value = new Set();
+  () => props.openSchemaKeys,
+  (openKeys) => {
+    const openSchemaKeySet = new Set(openKeys ?? []);
+    openGroupKeys.value = new Set(
+      [...openGroupKeys.value].filter((key) => {
+        const schemaKeyPart = key.split(":").slice(0, 3).join(":");
+        return openSchemaKeySet.has(schemaKeyPart);
+      }),
+    );
   },
-  { deep: true },
 );
 
 const folderClass = {
@@ -135,6 +143,19 @@ function openObjectContextMenu(event, schema, group, item) {
   objectContextOpen.value = true;
 }
 
+function openGroupContextMenu(event, schema, group) {
+  event.preventDefault();
+  const type = groupType(group);
+  if (type !== "table") {
+    return;
+  }
+
+  contextGroup.value = { schema, groupType: type };
+  selectedKey.value = groupKey(schema, group);
+  groupContextPosition.value = { x: event.clientX, y: event.clientY };
+  groupContextOpen.value = true;
+}
+
 function handleSchemaContextSelect(item) {
   if (!contextSchema.value) {
     return;
@@ -160,8 +181,24 @@ function handleObjectContextSelect(item) {
   });
 }
 
+function handleGroupContextSelect(item) {
+  if (!contextGroup.value) {
+    return;
+  }
+
+  emit("database-object-action", {
+    action: item.key,
+    schema: contextGroup.value.schema,
+    groupType: contextGroup.value.groupType,
+  });
+}
+
 function itemName(item) {
   return typeof item === "string" ? item : item.name;
+}
+
+function itemKey(schema, group, item) {
+  return `${schemaKey(schema)}:${groupType(group)}:${item.id ?? itemName(item)}`;
 }
 
 function includesQuery(value, query) {
@@ -199,6 +236,7 @@ function includesQuery(value, query) {
           :class="{ selected: selectedKey === groupKey(schema, group) }"
           @click.prevent="selectOnly(groupKey(schema, group))"
           @dblclick.prevent="toggleGroup(schema, group)"
+          @contextmenu.prevent="openGroupContextMenu($event, schema, group)"
         >
           <button
             class="tree-toggle"
@@ -212,11 +250,11 @@ function includesQuery(value, query) {
         </summary>
         <button
           v-for="item in group.items"
-          :key="itemName(item)"
+          :key="item.id ?? itemName(item)"
           class="tree-item"
-          :class="{ selected: selectedKey === `${schemaKey(schema)}:${groupType(group)}:${itemName(item)}` }"
-          @click.prevent="selectOnly(`${schemaKey(schema)}:${groupType(group)}:${itemName(item)}`)"
-          @dblclick="emit('open-table-query', { schema: schema.name, groupType: groupType(group), item: itemName(item) })"
+          :class="{ selected: selectedKey === itemKey(schema, group, item) }"
+          @click.prevent="selectOnly(itemKey(schema, group, item))"
+          @dblclick="emit('open-table-query', { schema: schema.name, groupType: groupType(group), item: groupType(group) === 'query' ? item : itemName(item) })"
           @contextmenu.prevent="openObjectContextMenu($event, schema, group, item)"
         >
           <span class="object-icon" :class="itemIconClass[groupType(group)] ?? 'object-icon-default'" />
@@ -240,13 +278,25 @@ function includesQuery(value, query) {
     <ContextMenu
       v-model="objectContextOpen"
       :items="[
+        { key: 'design-table', label: '设计表', hidden: contextObject?.groupType !== 'table' },
         { key: 'create-table', label: '新建表', hidden: contextObject?.groupType !== 'table' },
+        { key: 'copy-table-structure', label: '复制表结构', hidden: contextObject?.groupType !== 'table' },
+        { key: 'copy-table-data', label: '复制结构和数据', hidden: contextObject?.groupType !== 'table' },
         { key: 'rename-table', label: '重命名表', hidden: contextObject?.groupType !== 'table' },
         { key: 'drop-table', label: '删除表', danger: true, divided: true, hidden: contextObject?.groupType !== 'table' },
       ]"
       :x="objectContextPosition.x"
       :y="objectContextPosition.y"
       @select="handleObjectContextSelect"
+    />
+    <ContextMenu
+      v-model="groupContextOpen"
+      :items="[
+        { key: 'create-table', label: '新建表' },
+      ]"
+      :x="groupContextPosition.x"
+      :y="groupContextPosition.y"
+      @select="handleGroupContextSelect"
     />
   </div>
 </template>

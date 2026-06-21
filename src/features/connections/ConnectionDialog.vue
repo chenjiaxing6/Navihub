@@ -1,6 +1,6 @@
 <script setup>
 import { computed, reactive, ref, watch } from "vue";
-import { ElMessage } from "element-plus";
+import { ElMessage } from "element-plus/es/components/message/index";
 import { testMysqlConnection } from "../database/mysqlApi";
 import { testSshConnection } from "../terminal/sshApi";
 

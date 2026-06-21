@@ -1,10 +1,46 @@
 <script setup>
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, shallowRef, watch } from "vue";
-import { ElMessage } from "element-plus";
-import { Close, DataAnalysis, Right, Search, VideoPlay } from "@element-plus/icons-vue";
+import { ElMessage } from "element-plus/es/components/message/index";
+import { Check, Close, DataAnalysis, DocumentChecked, Minus, Plus, Refresh, Right, Search, VideoPlay } from "@element-plus/icons-vue";
+import { ElMessageBox } from "element-plus/es/components/message-box/index";
 import ContextMenu from "../../shared/ContextMenu.vue";
+import TableDesigner from "./TableDesigner.vue";
 import { describeMysqlTable, executeMysqlQuery } from "./mysqlApi";
 import { ensureMysqlConnection, formatMysqlMeta } from "./databaseDefaults";
+import { SQL_COMPLETION_KEYWORDS, defaultQuerySql, quoteIdentifier, quoteString } from "./databaseQueryUtils";
+import {
+  buildTableDesignSql,
+  applyOptionsFromTableDetail,
+  checksFromTableDetail,
+  columnsFromTableDetail,
+  createDesignState,
+  foreignKeysFromTableDetail,
+  indexesFromTableDetail,
+  markDesignStateSaved,
+  triggersFromTableDetail,
+} from "./databaseTableDesigner";
+import {
+  DEFAULT_PAGE_SIZE,
+  PAGE_SIZE_OPTIONS,
+  TABLE_COLUMN_MIN_WIDTH,
+  TABLE_OVERSCAN,
+  TABLE_ROW_HEIGHT,
+  clampColumnWidth,
+  clampRangeIndexes,
+  columnMinWidth,
+  copyTextForCells,
+  copyTextForRows,
+  emptyCellRange,
+  emptyRowRange,
+  formatCellValue,
+  formatDataLength,
+  formatRowCount,
+  formatTableDate,
+  normalizePositiveInteger,
+  rowMatchesSearch,
+  schemaTableCellValue,
+  schemaTableSelectKey,
+} from "./databaseTableUtils";
 
 const props = defineProps({
   connection: { type: Object, required: true },
@@ -13,7 +49,7 @@ const props = defineProps({
   pendingTableQuery: { type: Object, default: null },
 });
 
-const emit = defineEmits(["schema-loaded", "update-connection", "open-table-query", "update-query-schema"]);
+const emit = defineEmits(["schema-loaded", "table-design-saved", "update-connection", "open-table-query", "refresh-connection", "save-query", "update-query-schema"]);
 const normalizedConnection = computed(() => ensureMysqlConnection(props.connection));
 const databaseTarget = computed(() => {
   const config = normalizedConnection.value.config;
@@ -45,11 +81,14 @@ const selectedResultRowRange = ref({ start: null, end: null });
 const selectedResultCellRange = ref({ startRow: null, endRow: null, startColumn: null, endColumn: null });
 const isSelectingResultRows = ref(false);
 const isSelectingResultCells = ref(false);
+const tableEditStates = ref({});
 const tableColumnWidths = ref({});
 const tabViewStates = ref({});
 const resizingColumn = ref(null);
 const copyContextOpen = ref(false);
 const copyContextPosition = ref({ x: 0, y: 0 });
+const tableDetailCache = ref({});
+const editingCell = ref(null);
 const schemaTableScrollLeft = ref(0);
 const schemaTableScrollTop = ref(0);
 const schemaTableViewport = ref(null);
@@ -64,25 +103,15 @@ const tableViewportHeight = ref(420);
 const tableSearchOpen = ref(false);
 const tableSearchQuery = ref("");
 const querySelection = ref({ start: 0, end: 0 });
-const DEFAULT_PAGE_SIZE = 1000;
-const PAGE_SIZE_OPTIONS = [100, 500, 1000, 2000, 5000];
-const TABLE_ROW_HEIGHT = 34;
-const TABLE_OVERSCAN = 8;
-const TABLE_COLUMN_MIN_WIDTH = 58;
-const TABLE_COLUMN_MAX_WIDTH = 640;
-const SQL_COMPLETION_KEYWORDS = [
-  "SELECT", "FROM", "WHERE", "JOIN", "LEFT JOIN", "RIGHT JOIN", "INNER JOIN", "ORDER BY", "GROUP BY",
-  "HAVING", "LIMIT", "OFFSET", "INSERT", "INTO", "VALUES", "UPDATE", "SET", "DELETE", "CREATE",
-  "ALTER", "DROP", "TABLE", "VIEW", "INDEX", "PRIMARY KEY", "FOREIGN KEY", "DISTINCT", "COUNT",
-  "SUM", "AVG", "MIN", "MAX", "AS", "AND", "OR", "NOT", "NULL", "IS", "IN", "LIKE", "BETWEEN",
-  "EXISTS", "CASE", "WHEN", "THEN", "ELSE", "END", "UNION", "ALL", "DESC", "ASC",
-];
+const tableDesignStates = ref({});
 let tableResizeObserver = null;
 let queryEditorModules = null;
 let queryEditorModulesPromise = null;
 let activeViewStateTabId = null;
 let restoringViewState = false;
 let applyingQueryEditorContent = false;
+let tableOperationToken = 0;
+let newRowSequence = 0;
 
 watch(
   () => normalizedConnection.value,
@@ -121,6 +150,7 @@ watch(
       loadSchemaTableMetadata(props.activeTopTab.schema);
       loadSchemaTableCounts(props.activeTopTab.schema);
     }
+    ensureTableDesignState(props.activeTopTab);
 
     await nextTick();
     if (props.activeTopTab?.kind === "query") {
@@ -201,11 +231,24 @@ const activeResult = computed(() => {
   const key = props.activeTopTab?.id;
   return key ? tableResults.value[key] : null;
 });
+const shouldShowResultPanel = computed(() => (
+  props.activeTopTab?.kind === "table" || Boolean(activeResult.value)
+));
+const activeEditState = computed(() => {
+  const tabId = props.activeTopTab?.id;
+  return tabId ? tableEditStates.value[tabId] ?? null : null;
+});
+const hasPendingTableChanges = computed(() => {
+  const state = activeEditState.value;
+  return Boolean(state && (state.newRows.length > 0 || state.updatedRows.size > 0));
+});
+const canEditActiveResult = computed(() => props.activeTopTab?.kind === "table" && Boolean(activeResult.value?.table));
+const canStopActiveOperation = computed(() => loading.value);
 
 const tableColumns = computed(() => {
   const tabId = props.activeTopTab?.id;
   const widths = tabId ? tableColumnWidths.value[tabId] ?? {} : {};
-  const columns = activeResult.value?.columns ?? [];
+  const columns = (activeResult.value?.columns ?? []).filter((column) => column !== "__myhubRowId");
   const baseColumns = columns.map((column) => ({
     key: column,
     label: column,
@@ -285,7 +328,7 @@ const activeQueryText = computed({
       return "";
     }
 
-    return querySqlByTab.value[tab.id] ?? defaultQuerySql(tab.schema);
+    return querySqlByTab.value[tab.id] ?? tab.sql ?? defaultQuerySql(tab.schema);
   },
   set(value) {
     const tab = props.activeTopTab;
@@ -313,6 +356,52 @@ const activeQuerySchemaName = computed({
     changeQuerySchema(schema);
   },
 });
+const activeDesignState = computed(() => {
+  const tabId = props.activeTopTab?.id;
+  return tabId ? tableDesignStates.value[tabId] : null;
+});
+const activeDesignSqlPreview = computed(() => {
+  const tab = props.activeTopTab;
+  const state = activeDesignState.value;
+  if (!tab || tab.kind !== "table-design" || !state) {
+    return { sql: "", error: "" };
+  }
+
+  try {
+    const sql = buildTableDesignSql(tab, state);
+    return { sql: Array.isArray(sql) ? sql.join("\n\n") : sql, error: "" };
+  } catch (error) {
+    return { sql: "", error: error.message ?? String(error) };
+  }
+});
+const copyContextItems = computed(() => {
+  const hasSelection = Boolean(selectedCopyText());
+  const isResult = ["table", "query"].includes(props.activeTopTab?.kind);
+  const isTable = props.activeTopTab?.kind === "table";
+
+  if (!isResult) {
+    return [{ key: "copy", label: "复制", disabled: !hasSelection }];
+  }
+
+  return [
+    { key: "delete-records", label: "删除记录", danger: true, disabled: !isTable || selectedResultRows().length === 0 },
+    { key: "copy", label: "复制", divided: true, disabled: !hasSelection },
+    { key: "copy-fields", label: "复制字段名称", disabled: selectedResultColumns().length === 0 },
+    {
+      key: "copy-as",
+      label: "复制为",
+      disabled: !hasSelection,
+      children: [
+        { key: "copy-insert", label: "Insert 语句", disabled: !isTable || selectedResultRows().length === 0 },
+        { key: "copy-update", label: "Update 语句", disabled: !isTable || selectedResultRows().length === 0 },
+        { key: "copy-tsv-data", label: "制表符分隔值（数据）", divided: true, disabled: !hasSelection },
+        { key: "copy-tsv-fields", label: "制表符分隔值（字段名称）", disabled: selectedResultColumns().length === 0 },
+        { key: "copy-tsv-fields-data", label: "制表符分隔值（字段名和数据）", disabled: !hasSelection },
+      ],
+    },
+    { key: "paste", label: "粘贴", disabled: !canPasteIntoResultSelection() },
+  ];
+});
 
 function currentConfig() {
   return {
@@ -332,18 +421,6 @@ function persistConfig(extra = {}) {
     config,
     ...extra,
   });
-}
-
-function quoteIdentifier(value) {
-  return `\`${String(value).replaceAll("`", "``")}\``;
-}
-
-function quoteString(value) {
-  return `'${String(value).replaceAll("\\", "\\\\").replaceAll("'", "''")}'`;
-}
-
-function defaultQuerySql(schema) {
-  return schema ? `-- ${schema}\nSELECT 1;` : "SELECT 1;";
 }
 
 function activeQuerySchema() {
@@ -665,18 +742,6 @@ function schemaTableCountKey(schema, table) {
   return `${normalizedConnection.value.id}:${schema}.${table}`;
 }
 
-function schemaTableSelectKey(row) {
-  return `${row.schema}.${row.name}`;
-}
-
-function emptyRowRange() {
-  return { start: null, end: null };
-}
-
-function emptyCellRange() {
-  return { startRow: null, endRow: null, startColumn: null, endColumn: null };
-}
-
 function defaultTabViewState() {
   return {
     searchOpen: false,
@@ -758,69 +823,12 @@ function applyStoredScrollState() {
   updateTableViewportHeight();
 }
 
-function clampRangeIndexes(start, end, maxLength) {
-  const from = Math.max(0, Math.min(start, end));
-  const to = Math.min(maxLength - 1, Math.max(start, end));
-  return { from, to };
-}
-
-function normalizePositiveInteger(value, fallback) {
-  const number = Number(value);
-  return Number.isFinite(number) && number > 0 ? Math.floor(number) : fallback;
-}
-
-function columnMinWidth(column) {
-  const length = String(column).length;
-  return Math.min(320, Math.max(140, length * 10 + 44));
-}
-
-function clampColumnWidth(width) {
-  return Math.min(TABLE_COLUMN_MAX_WIDTH, Math.max(TABLE_COLUMN_MIN_WIDTH, Math.round(width)));
-}
-
-function formatCellValue(value) {
-  if (value === null || value === undefined) {
-    return "NULL";
-  }
-  if (typeof value === "object") {
-    return JSON.stringify(value);
-  }
-  return String(value);
-}
-
-function formatRowCount(value) {
-  const number = Number(value ?? 0);
-  return Number.isFinite(number) ? number.toLocaleString("zh-CN") : "0";
-}
-
-function formatDataLength(value) {
-  const bytes = Number(value ?? 0);
-  if (!Number.isFinite(bytes) || bytes <= 0) {
-    return "0 B";
-  }
-
-  const units = ["B", "KB", "MB", "GB", "TB"];
-  const exponent = Math.min(Math.floor(Math.log(bytes) / Math.log(1024)), units.length - 1);
-  const size = bytes / 1024 ** exponent;
-  const formatted = size >= 10 || exponent === 0 ? Math.round(size).toString() : size.toFixed(1);
-  return `${formatted} ${units[exponent]}`;
-}
-
-function formatTableDate(value) {
-  return value ? String(value).replace(".000000", "") : "";
-}
-
-function schemaTableCellValue(row, column) {
-  const value = row[column.key];
-  return column.formatter ? column.formatter(value) : formatCellValue(value);
-}
-
-function rowMatchesSearch(row, columns, query, valueGetter) {
-  return columns.some((column) => valueGetter(row, column).toLowerCase().includes(query));
-}
-
 async function openTableSearch() {
-  if (!props.activeTopTab || !["schema", "table", "query"].includes(props.activeTopTab.kind)) {
+  if (
+    !props.activeTopTab ||
+    !["schema", "table", "query"].includes(props.activeTopTab.kind) ||
+    (props.activeTopTab.kind === "query" && !shouldShowResultPanel.value)
+  ) {
     return;
   }
 
@@ -929,8 +937,34 @@ function stopSchemaCellSelection() {
   isSelectingSchemaCells.value = false;
 }
 
-function openCopyContextMenu(event) {
-  if (!selectedCopyText()) {
+function openCopyContextMenu(event, rowIndex = null, columnIndex = null) {
+  if (props.activeTopTab?.kind !== "schema" && rowIndex !== null) {
+    const hasCellSelection = selectedResultCellRange.value.startRow !== null;
+    const hasRowSelection = selectedResultRowRange.value.start !== null;
+    const isInsideSelection = columnIndex === null
+      ? isAbsoluteResultRowSelected(rowIndex)
+      : isAbsoluteResultCellSelected(rowIndex, columnIndex);
+
+    if (!hasCellSelection && !hasRowSelection) {
+      if (columnIndex === null) {
+        clearResultCellSelection();
+        selectResultRowRange(rowIndex);
+      } else {
+        clearResultRowSelection();
+        selectResultCellRange(rowIndex, columnIndex);
+      }
+    } else if (!isInsideSelection) {
+      if (columnIndex === null) {
+        clearResultCellSelection();
+        selectResultRowRange(rowIndex);
+      } else {
+        clearResultRowSelection();
+        selectResultCellRange(rowIndex, columnIndex);
+      }
+    }
+  }
+
+  if (copyContextItems.value.every((item) => item.disabled || item.children?.every((child) => child.disabled))) {
     return;
   }
 
@@ -941,6 +975,22 @@ function openCopyContextMenu(event) {
 function handleCopyContextSelect(item) {
   if (item.key === "copy") {
     copySelectedText();
+  } else if (item.key === "copy-fields") {
+    copyText(selectedResultColumnNames().join("\t"), "已复制字段名称");
+  } else if (item.key === "copy-insert") {
+    copyGeneratedSql("insert");
+  } else if (item.key === "copy-update") {
+    copyGeneratedSql("update");
+  } else if (item.key === "copy-tsv-data") {
+    copySelectedText();
+  } else if (item.key === "copy-tsv-fields") {
+    copyText(selectedResultColumnNames().join("\t"), "已复制字段名称");
+  } else if (item.key === "copy-tsv-fields-data") {
+    copyText([selectedResultColumnNames().join("\t"), selectedResultCopyText()].filter(Boolean).join("\n"), "已复制");
+  } else if (item.key === "paste") {
+    pasteIntoSelectedCells();
+  } else if (item.key === "delete-records") {
+    deleteSelectedRecords();
   }
 }
 
@@ -978,26 +1028,6 @@ function handleKeydown(event) {
 
   event.preventDefault();
   copySelectedText();
-}
-
-function copyTextForRows(rows, columns) {
-  return rows
-    .map((row) => columns.map((column) => (column.formatter ? column.formatter(row[column.key]) : formatCellValue(row[column.key]))).join("\t"))
-    .join("\n");
-}
-
-function copyTextForCells(rows, columns, range) {
-  const rowRange = clampRangeIndexes(range.startRow, range.endRow, rows.length);
-  const columnRange = clampRangeIndexes(range.startColumn, range.endColumn, columns.length);
-  return rows
-    .slice(rowRange.from, rowRange.to + 1)
-    .map((row) =>
-      columns
-        .slice(columnRange.from, columnRange.to + 1)
-        .map((column) => (column.formatter ? column.formatter(row[column.key]) : formatCellValue(row[column.key])))
-        .join("\t"),
-    )
-    .join("\n");
 }
 
 function selectedSchemaCopyText() {
@@ -1056,12 +1086,586 @@ async function copySelectedText() {
     return;
   }
 
+  copyText(text, "已复制");
+}
+
+async function copyText(text, successMessage = "已复制") {
+  if (!text) {
+    return;
+  }
+
   try {
     await navigator.clipboard.writeText(text);
-    ElMessage.success("已复制");
+    ElMessage.success(successMessage);
   } catch (error) {
     ElMessage.error(`复制失败：${error}`);
   }
+}
+
+function isAbsoluteResultRowSelected(rowIndex) {
+  const { start, end } = selectedResultRowRange.value;
+  if (start === null || end === null) {
+    return false;
+  }
+
+  return rowIndex >= Math.min(start, end) && rowIndex <= Math.max(start, end);
+}
+
+function isAbsoluteResultCellSelected(rowIndex, columnIndex) {
+  const { startRow, endRow, startColumn, endColumn } = selectedResultCellRange.value;
+  if (startRow === null || endRow === null || startColumn === null || endColumn === null) {
+    return false;
+  }
+
+  return rowIndex >= Math.min(startRow, endRow)
+    && rowIndex <= Math.max(startRow, endRow)
+    && columnIndex >= Math.min(startColumn, endColumn)
+    && columnIndex <= Math.max(startColumn, endColumn);
+}
+
+function selectedResultColumnIndexes() {
+  const { startColumn, endColumn } = selectedResultCellRange.value;
+  if (startColumn !== null && endColumn !== null) {
+    const columnRange = clampRangeIndexes(startColumn, endColumn, tableColumns.value.length);
+    return Array.from({ length: columnRange.to - columnRange.from + 1 }, (_, index) => columnRange.from + index);
+  }
+
+  return tableColumns.value.map((_, index) => index);
+}
+
+function selectedResultColumns() {
+  return selectedResultColumnIndexes().map((index) => tableColumns.value[index]).filter(Boolean);
+}
+
+function selectedResultColumnNames() {
+  return selectedResultColumns().map((column) => column.key);
+}
+
+function selectedResultRows() {
+  const rows = searchedResultRows.value;
+  const { startRow, endRow } = selectedResultCellRange.value;
+  if (startRow !== null && endRow !== null) {
+    const rowRange = clampRangeIndexes(startRow, endRow, rows.length);
+    return rows.slice(rowRange.from, rowRange.to + 1);
+  }
+
+  const { start, end } = selectedResultRowRange.value;
+  if (start !== null && end !== null) {
+    const rowRange = clampRangeIndexes(start, end, rows.length);
+    return rows.slice(rowRange.from, rowRange.to + 1);
+  }
+
+  return [];
+}
+
+function rowInternalId(row) {
+  return row?.__myhubRowId ?? "";
+}
+
+function editableRows(rows) {
+  return (rows ?? []).map((row) => ({
+    ...row,
+    __myhubRowId: rowInternalId(row) || `row-${newRowSequence += 1}`,
+  }));
+}
+
+function publicRow(row) {
+  const next = { ...(row ?? {}) };
+  delete next.__myhubRowId;
+  return next;
+}
+
+function publicRows(rows) {
+  return (rows ?? []).map(publicRow);
+}
+
+function createEditState(rows = []) {
+  return {
+    originalRows: new Map(rows.map((row) => [rowInternalId(row), publicRow(row)])),
+    newRows: [],
+    updatedRows: new Map(),
+  };
+}
+
+function setEditState(tabId, state) {
+  tableEditStates.value = {
+    ...tableEditStates.value,
+    [tabId]: state,
+  };
+}
+
+function clearEditState(tabId = props.activeTopTab?.id) {
+  if (!tabId) {
+    return;
+  }
+
+  const nextStates = { ...tableEditStates.value };
+  delete nextStates[tabId];
+  tableEditStates.value = nextStates;
+}
+
+function ensureActiveEditState() {
+  const tabId = props.activeTopTab?.id;
+  if (!tabId || !activeResult.value) {
+    return null;
+  }
+
+  const existing = tableEditStates.value[tabId];
+  if (existing) {
+    return existing;
+  }
+
+  const state = createEditState(activeResult.value.rows ?? []);
+  setEditState(tabId, state);
+  return state;
+}
+
+function updateActiveRows(rows) {
+  const tabId = props.activeTopTab?.id;
+  const result = activeResult.value;
+  if (!tabId || !result) {
+    return;
+  }
+
+  tableResults.value = {
+    ...tableResults.value,
+    [tabId]: {
+      ...result,
+      rows,
+      totalRows: props.activeTopTab?.kind === "table" ? Math.max(result.totalRows ?? 0, rows.length) : rows.length,
+    },
+  };
+}
+
+function markRowChanged(row) {
+  if (!canEditActiveResult.value) {
+    return;
+  }
+
+  const state = ensureActiveEditState();
+  if (!state) {
+    return;
+  }
+
+  const rowId = rowInternalId(row);
+  if (state.newRows.includes(rowId)) {
+    return;
+  }
+
+  const original = state.originalRows.get(rowId);
+  const current = publicRow(row);
+  if (JSON.stringify(original ?? {}) === JSON.stringify(current)) {
+    state.updatedRows.delete(rowId);
+  } else {
+    state.updatedRows.set(rowId, current);
+  }
+}
+
+function isNewResultRow(row) {
+  return Boolean(activeEditState.value?.newRows.includes(rowInternalId(row)));
+}
+
+function isChangedResultRow(row) {
+  return isNewResultRow(row) || Boolean(activeEditState.value?.updatedRows.has(rowInternalId(row)));
+}
+
+function isChangedResultCell(row, column) {
+  const state = activeEditState.value;
+  const rowId = rowInternalId(row);
+  if (!state || state.newRows.includes(rowId)) {
+    return false;
+  }
+
+  const original = state.originalRows.get(rowId);
+  return state.updatedRows.has(rowId) && original?.[column.key] !== row[column.key];
+}
+
+function setResultCellValue(row, column, value) {
+  if (!canEditActiveResult.value) {
+    return;
+  }
+
+  const resultRows = activeResult.value?.rows ?? [];
+  const rowId = rowInternalId(row);
+  const rowIndex = resultRows.findIndex((item) => rowInternalId(item) === rowId);
+  if (rowIndex < 0) {
+    return;
+  }
+
+  const nextRow = { ...resultRows[rowIndex], [column.key]: value };
+  const nextRows = [...resultRows];
+  nextRows[rowIndex] = nextRow;
+  updateActiveRows(nextRows);
+  markRowChanged(nextRow);
+}
+
+function mysqlValueLiteral(value) {
+  if (value === null || value === undefined) {
+    return "NULL";
+  }
+  if (value instanceof Date) {
+    return quoteString(value.toISOString());
+  }
+  if (typeof value === "number") {
+    return Number.isFinite(value) ? String(value) : "NULL";
+  }
+  if (typeof value === "bigint") {
+    return String(value);
+  }
+  if (typeof value === "boolean") {
+    return value ? "1" : "0";
+  }
+  if (typeof value === "object") {
+    return quoteString(JSON.stringify(value));
+  }
+  return quoteString(value);
+}
+
+function activeTableNameSql() {
+  const result = activeResult.value;
+  if (!result?.schema || !result?.table) {
+    return "";
+  }
+  return `${quoteIdentifier(result.schema)}.${quoteIdentifier(result.table)}`;
+}
+
+function tableDetailCacheKey(schema, table) {
+  return `${normalizedConnection.value.id}:${schema}.${table}`;
+}
+
+async function loadActiveTableDetail() {
+  const result = activeResult.value;
+  if (!result?.schema || !result?.table) {
+    return null;
+  }
+
+  const cacheKey = tableDetailCacheKey(result.schema, result.table);
+  if (tableDetailCache.value[cacheKey]) {
+    return tableDetailCache.value[cacheKey];
+  }
+
+  const detail = await describeMysqlTable(currentConfig(), result.schema, result.table);
+  tableDetailCache.value = {
+    ...tableDetailCache.value,
+    [cacheKey]: detail,
+  };
+  return detail;
+}
+
+function primaryKeyColumns(detail) {
+  return (detail?.indexes ?? [])
+    .filter((index) => index.name === "PRIMARY")
+    .sort((left, right) => Number(left.seqInIndex ?? 0) - Number(right.seqInIndex ?? 0))
+    .map((index) => index.columnName)
+    .filter(Boolean);
+}
+
+function rowWhereClause(row, columns) {
+  return columns
+    .map((column) => `${quoteIdentifier(column)} <=> ${mysqlValueLiteral(row[column])}`)
+    .join(" AND ");
+}
+
+async function copyGeneratedSql(kind) {
+  try {
+    const rows = selectedResultRows();
+    const columns = selectedResultColumnNames();
+    const tableName = activeTableNameSql();
+    if (!tableName || rows.length === 0 || columns.length === 0) {
+      return;
+    }
+
+    const detail = await loadActiveTableDetail();
+    const whereColumns = primaryKeyColumns(detail);
+    const sql = rows.map((row) => {
+      if (kind === "insert") {
+        const columnSql = columns.map(quoteIdentifier).join(", ");
+        const valueSql = columns.map((column) => mysqlValueLiteral(row[column])).join(", ");
+        return `INSERT INTO ${tableName} (${columnSql}) VALUES (${valueSql});`;
+      }
+
+      const setSql = columns.map((column) => `${quoteIdentifier(column)} = ${mysqlValueLiteral(row[column])}`).join(", ");
+      const whereSql = whereColumns.length > 0 ? rowWhereClause(row, whereColumns) : rowWhereClause(row, tableColumns.value.map((column) => column.key));
+      return `UPDATE ${tableName} SET ${setSql} WHERE ${whereSql};`;
+    }).join("\n");
+
+    copyText(sql, kind === "insert" ? "已复制 Insert 语句" : "已复制 Update 语句");
+  } catch (error) {
+    ElMessage.error(`生成 SQL 失败：${error}`);
+  }
+}
+
+function canPasteIntoResultSelection() {
+  return ["table", "query"].includes(props.activeTopTab?.kind)
+    && selectedResultCellRange.value.startRow !== null
+    && selectedResultCellRange.value.startColumn !== null;
+}
+
+async function pasteIntoSelectedCells() {
+  if (!canPasteIntoResultSelection()) {
+    return;
+  }
+
+  try {
+    const text = await navigator.clipboard.readText();
+    if (!text) {
+      return;
+    }
+
+    const { startRow, startColumn } = selectedResultCellRange.value;
+    const pastedRows = text.replace(/\r\n/g, "\n").replace(/\r/g, "\n").split("\n").map((row) => row.split("\t"));
+    const result = activeResult.value;
+    if (!result || startRow === null || startColumn === null) {
+      return;
+    }
+
+    const sourceRows = searchedResultRows.value;
+    const nextRows = [...(result.rows ?? [])];
+    for (let rowOffset = 0; rowOffset < pastedRows.length; rowOffset += 1) {
+      const rowIndex = startRow + rowOffset;
+      const sourceRow = sourceRows[rowIndex];
+      const resultRowIndex = nextRows.findIndex((row) => rowInternalId(row) === rowInternalId(sourceRow));
+      if (!sourceRow || resultRowIndex < 0) {
+        break;
+      }
+
+      const nextRow = { ...sourceRow };
+      for (let columnOffset = 0; columnOffset < pastedRows[rowOffset].length; columnOffset += 1) {
+        const column = tableColumns.value[startColumn + columnOffset];
+        if (!column) {
+          break;
+        }
+        nextRow[column.key] = pastedRows[rowOffset][columnOffset];
+      }
+      nextRows[resultRowIndex] = nextRow;
+      if (canEditActiveResult.value) {
+        markRowChanged(nextRow);
+      }
+    }
+
+    updateActiveRows(nextRows);
+    ElMessage.success(canEditActiveResult.value ? "已粘贴，待提交" : "已粘贴到当前结果");
+  } catch (error) {
+    ElMessage.error(`粘贴失败：${error}`);
+  }
+}
+
+async function deleteSelectedRecords() {
+  const rows = selectedResultRows();
+  const tableName = activeTableNameSql();
+  if (!tableName || rows.length === 0) {
+    return;
+  }
+
+  try {
+    const detail = await loadActiveTableDetail();
+    const keyColumns = primaryKeyColumns(detail);
+    if (keyColumns.length === 0) {
+      ElMessage.warning("当前表没有主键，无法安全删除记录");
+      return;
+    }
+
+    await ElMessageBox.confirm(`确定删除选中的 ${rows.length} 条记录吗？`, "删除记录", {
+      confirmButtonText: "删除",
+      cancelButtonText: "取消",
+      type: "warning",
+      customClass: "bruno-message-box",
+    });
+
+    const operationToken = tableOperationToken += 1;
+    loading.value = true;
+    for (const row of rows) {
+      if (operationToken !== tableOperationToken) {
+        return;
+      }
+      const sql = `DELETE FROM ${tableName} WHERE ${rowWhereClause(row, keyColumns)} LIMIT 1;`;
+      await executeMysqlQuery(currentConfig(), activeResult.value.schema, sql);
+    }
+    if (operationToken !== tableOperationToken) {
+      return;
+    }
+    ElMessage.success("记录已删除");
+    await loadTableData(activeResult.value.schema, activeResult.value.table, props.activeTopTab.id, {
+      page: activeResult.value.page,
+      pageSize: activeResult.value.pageSize,
+    });
+  } catch (error) {
+    if (error !== "cancel" && error !== "close") {
+      ElMessage.error(`删除失败：${error}`);
+    }
+  } finally {
+    loading.value = false;
+  }
+}
+
+function refreshActiveResult() {
+  const tab = props.activeTopTab;
+  if (tab?.kind === "table" && activeResult.value?.schema && activeResult.value?.table) {
+    loadTableData(activeResult.value.schema, activeResult.value.table, tab.id, {
+      page: activeResult.value.page,
+      pageSize: activeResult.value.pageSize,
+    });
+  } else if (tab?.kind === "query") {
+    executeActiveQuery();
+  }
+}
+
+function addResultRow() {
+  if (!canEditActiveResult.value) {
+    return;
+  }
+
+  const state = ensureActiveEditState();
+  if (!state) {
+    return;
+  }
+
+  const row = Object.fromEntries(tableColumns.value.map((column) => [column.key, null]));
+  row.__myhubRowId = `new-${newRowSequence += 1}`;
+  state.newRows.push(row.__myhubRowId);
+  updateActiveRows([row, ...(activeResult.value?.rows ?? [])]);
+  clearResultRowSelection();
+  selectResultCellRange(0, 0);
+}
+
+function cancelTableChanges() {
+  const result = activeResult.value;
+  const state = activeEditState.value;
+  if (!result || !state) {
+    return;
+  }
+
+  const restoredRows = (result.rows ?? [])
+    .filter((row) => !state.newRows.includes(rowInternalId(row)))
+    .map((row) => {
+      const original = state.originalRows.get(rowInternalId(row));
+      return original ? { ...original, __myhubRowId: rowInternalId(row) } : row;
+    });
+  clearEditState();
+  editingCell.value = null;
+  updateActiveRows(restoredRows);
+  ElMessage.success("已取消未提交更改");
+}
+
+async function commitTableChanges() {
+  const result = activeResult.value;
+  const state = activeEditState.value;
+  const tableName = activeTableNameSql();
+  if (!canEditActiveResult.value || !result || !state || !tableName || !hasPendingTableChanges.value) {
+    return;
+  }
+
+  try {
+    const detail = await loadActiveTableDetail();
+    const keyColumns = primaryKeyColumns(detail);
+    if (state.updatedRows.size > 0 && keyColumns.length === 0) {
+      ElMessage.warning("当前表没有主键，无法安全提交更新");
+      return;
+    }
+
+    const operationToken = tableOperationToken += 1;
+    loading.value = true;
+    const newRowIds = new Set(state.newRows);
+    const rowsById = new Map((result.rows ?? []).map((row) => [rowInternalId(row), row]));
+    for (const rowId of state.newRows) {
+      const row = rowsById.get(rowId);
+      if (!row) {
+        continue;
+      }
+      const values = publicRow(row);
+      const columns = Object.keys(values);
+      const sql = `INSERT INTO ${tableName} (${columns.map(quoteIdentifier).join(", ")}) VALUES (${columns.map((column) => mysqlValueLiteral(values[column])).join(", ")});`;
+      await executeMysqlQuery(currentConfig(), result.schema, sql);
+      if (operationToken !== tableOperationToken) {
+        return;
+      }
+    }
+
+    for (const [rowId] of state.updatedRows) {
+      if (newRowIds.has(rowId)) {
+        continue;
+      }
+      const row = rowsById.get(rowId);
+      const original = state.originalRows.get(rowId);
+      if (!row || !original) {
+        continue;
+      }
+      const changedColumns = tableColumns.value
+        .map((column) => column.key)
+        .filter((column) => original[column] !== row[column]);
+      if (changedColumns.length === 0) {
+        continue;
+      }
+      const setSql = changedColumns.map((column) => `${quoteIdentifier(column)} = ${mysqlValueLiteral(row[column])}`).join(", ");
+      const sql = `UPDATE ${tableName} SET ${setSql} WHERE ${rowWhereClause(original, keyColumns)} LIMIT 1;`;
+      await executeMysqlQuery(currentConfig(), result.schema, sql);
+      if (operationToken !== tableOperationToken) {
+        return;
+      }
+    }
+
+    ElMessage.success("更改已提交");
+    clearEditState();
+    await loadTableData(result.schema, result.table, props.activeTopTab.id, {
+      page: result.page,
+      pageSize: result.pageSize,
+    });
+  } catch (error) {
+    ElMessage.error(`提交失败：${error}`);
+  } finally {
+    loading.value = false;
+  }
+}
+
+function stopActiveOperation() {
+  tableOperationToken += 1;
+  loading.value = false;
+  ElMessage.info("已停止等待当前操作");
+}
+
+function startCellEdit(rowIndex, columnIndex) {
+  if (!canEditActiveResult.value) {
+    return;
+  }
+
+  const row = searchedResultRows.value[rowIndex];
+  const column = tableColumns.value[columnIndex];
+  if (!row || !column) {
+    return;
+  }
+
+  editingCell.value = {
+    rowId: rowInternalId(row),
+    columnKey: column.key,
+    value: row[column.key] ?? "",
+  };
+  nextTick(() => {
+    const input = tableViewport.value?.querySelector(".virtual-table__cell-input");
+    input?.focus();
+    input?.select();
+  });
+}
+
+function commitCellEdit() {
+  const edit = editingCell.value;
+  if (!edit) {
+    return;
+  }
+
+  const row = (activeResult.value?.rows ?? []).find((item) => rowInternalId(item) === edit.rowId);
+  const column = tableColumns.value.find((item) => item.key === edit.columnKey);
+  if (row && column) {
+    setResultCellValue(row, column, edit.value);
+  }
+  editingCell.value = null;
+}
+
+function cancelCellEdit() {
+  editingCell.value = null;
+}
+
+function isEditingResultCell(row, column) {
+  return editingCell.value?.rowId === rowInternalId(row) && editingCell.value?.columnKey === column.key;
 }
 
 function selectSchemaTable(row) {
@@ -1228,6 +1832,88 @@ function tableCellValue(row, column) {
   return formatCellValue(row[column.key]);
 }
 
+async function ensureTableDesignState(tab = props.activeTopTab) {
+  if (!tab || tab.kind !== "table-design") {
+    return;
+  }
+
+  if (tableDesignStates.value[tab.id]) {
+    return;
+  }
+
+  const state = createDesignState(tab);
+  tableDesignStates.value = {
+    ...tableDesignStates.value,
+    [tab.id]: state,
+  };
+
+  if (tab.mode !== "edit" || !tab.table) {
+    return;
+  }
+
+  loading.value = true;
+  try {
+    const detail = await describeMysqlTable(currentConfig(), tab.schema, tab.table);
+    applyOptionsFromTableDetail(state, detail);
+    tableDesignStates.value = {
+      ...tableDesignStates.value,
+      [tab.id]: {
+        ...state,
+        loaded: true,
+        columns: columnsFromTableDetail(detail),
+        indexes: indexesFromTableDetail(detail),
+        foreignKeys: foreignKeysFromTableDetail(detail),
+        triggers: triggersFromTableDetail(detail),
+        checks: checksFromTableDetail(detail),
+      },
+    };
+  } catch (error) {
+    ElMessage.error(`加载表结构失败：${error}`);
+  } finally {
+    loading.value = false;
+  }
+}
+
+async function saveTableDesign() {
+  const tab = props.activeTopTab;
+  const state = activeDesignState.value;
+  if (!tab || tab.kind !== "table-design" || !state) {
+    return;
+  }
+
+  try {
+    const wasCreate = state.mode === "create";
+    const sql = buildTableDesignSql(tab, state);
+    const statements = Array.isArray(sql) ? sql.filter(Boolean) : [sql].filter(Boolean);
+    if (statements.length === 0) {
+      ElMessage.info("没有结构变更");
+      return;
+    }
+
+    state.saving = true;
+    for (const statement of statements) {
+      await executeMysqlQuery(currentConfig(), tab.schema, statement);
+    }
+    markDesignStateSaved(state);
+    ElMessage.success(wasCreate ? "表已创建" : "表结构已保存");
+    emit("table-design-saved", {
+      tabId: tab.id,
+      connectionId: normalizedConnection.value.id,
+      database: tab.schema,
+      table: wasCreate ? "" : tab.table,
+      newTable: state.tableName,
+      wasCreate,
+    });
+    emit("refresh-connection", normalizedConnection.value);
+  } catch (error) {
+    ElMessage.error(`保存表结构失败：${error.message ?? error}`);
+  } finally {
+    if (state) {
+      state.saving = false;
+    }
+  }
+}
+
 function handleSchemaTableScroll(event) {
   schemaTableScrollTop.value = event.currentTarget.scrollTop;
   schemaTableScrollLeft.value = event.currentTarget.scrollLeft;
@@ -1296,6 +1982,7 @@ async function loadTableData(schema, table, tabId = props.activeTopTab?.id, opti
   const pageSize = normalizePositiveInteger(options.pageSize ?? previous?.pageSize, DEFAULT_PAGE_SIZE);
   const page = normalizePositiveInteger(options.page ?? previous?.page, 1);
   const offset = (page - 1) * pageSize;
+  const operationToken = tableOperationToken += 1;
 
   loading.value = true;
   const tableName = `${quoteIdentifier(schema)}.${quoteIdentifier(table)}`;
@@ -1306,11 +1993,16 @@ async function loadTableData(schema, table, tabId = props.activeTopTab?.id, opti
       executeMysqlQuery(currentConfig(), schema, sql),
       executeMysqlQuery(currentConfig(), schema, countSql),
     ]);
+    if (operationToken !== tableOperationToken) {
+      return;
+    }
     const totalRows = Number(countResult.rows?.[0]?.total ?? 0);
+    const rows = editableRows(result.rows ?? []);
     tableResults.value = {
       ...tableResults.value,
       [tabId]: {
         ...result,
+        rows,
         schema,
         table,
         page,
@@ -1321,12 +2013,17 @@ async function loadTableData(schema, table, tabId = props.activeTopTab?.id, opti
     await nextTick();
     clearResultRowSelection();
     clearResultCellSelection();
+    clearEditState(tabId);
     resetTableScroll();
     saveTabViewState(tabId);
   } catch (error) {
-    ElMessage.error(`加载表数据失败：${error}`);
+    if (operationToken === tableOperationToken) {
+      ElMessage.error(`加载表数据失败：${error}`);
+    }
   } finally {
-    loading.value = false;
+    if (operationToken === tableOperationToken) {
+      loading.value = false;
+    }
   }
 }
 
@@ -1343,13 +2040,18 @@ async function executeActiveQuery() {
     return;
   }
 
+  const operationToken = tableOperationToken += 1;
   loading.value = true;
   try {
     const result = await executeMysqlQuery(currentConfig(), tab.schema, sql);
+    if (operationToken !== tableOperationToken) {
+      return;
+    }
     tableResults.value = {
       ...tableResults.value,
       [tab.id]: {
         ...result,
+        rows: editableRows(result.rows ?? []),
         schema: tab.schema,
         table: null,
         page: 1,
@@ -1360,12 +2062,56 @@ async function executeActiveQuery() {
     await nextTick();
     clearResultRowSelection();
     clearResultCellSelection();
+    clearEditState(tab.id);
     resetTableScroll();
     saveTabViewState(tab.id);
   } catch (error) {
-    ElMessage.error(`执行查询失败：${error}`);
+    if (operationToken === tableOperationToken) {
+      ElMessage.error(`执行查询失败：${error}`);
+    }
   } finally {
-    loading.value = false;
+    if (operationToken === tableOperationToken) {
+      loading.value = false;
+    }
+  }
+}
+
+async function saveActiveQuery() {
+  const tab = props.activeTopTab;
+  if (!tab || tab.kind !== "query") {
+    return;
+  }
+
+  const sql = activeQueryText.value.trim();
+  if (!sql) {
+    ElMessage.warning("请输入 SQL");
+    return;
+  }
+
+  try {
+    const { value } = await ElMessageBox.prompt("输入查询名称", tab.savedQueryId ? "保存查询" : "新建查询", {
+      inputValue: tab.savedQueryId ? tab.label : "",
+      inputPlaceholder: "例如：用户增长明细",
+      confirmButtonText: "保存",
+      cancelButtonText: "取消",
+      customClass: "bruno-message-box folder-prompt-box",
+      inputValidator(value) {
+        return String(value ?? "").trim() ? true : "请输入查询名称";
+      },
+    });
+    const name = String(value ?? "").trim();
+    emit("save-query", {
+      tabId: tab.id,
+      connectionId: normalizedConnection.value.id,
+      queryId: tab.savedQueryId,
+      schema: tab.schema,
+      name,
+      sql: activeQueryText.value,
+    });
+  } catch (error) {
+    if (error !== "cancel" && error !== "close") {
+      ElMessage.error(`保存查询失败：${error}`);
+    }
   }
 }
 
@@ -1576,10 +2322,22 @@ function handlePageChange(page) {
         </div>
       </section>
 
+      <TableDesigner
+        v-else-if="activeTopTab.kind === 'table-design'"
+        :schema="activeTopTab.schema"
+        :sql-error="activeDesignSqlPreview.error"
+        :sql-preview="activeDesignSqlPreview.sql"
+        :state="activeDesignState"
+        @save="saveTableDesign"
+      />
+
       <section
         v-else-if="['table', 'query'].includes(activeTopTab.kind)"
         class="tab-content has-footer"
-        :class="{ 'query-tab': activeTopTab.kind === 'query' }"
+        :class="{
+          'query-tab': activeTopTab.kind === 'query',
+          'query-tab-empty': activeTopTab.kind === 'query' && !shouldShowResultPanel,
+        }"
       >
         <div v-if="activeTopTab.kind === 'query'" class="query-editor">
           <div class="query-editor__bar">
@@ -1602,18 +2360,28 @@ function handlePageChange(page) {
                 :value="schema"
               />
             </el-select>
-            <el-button
-              class="query-run-button"
-              :icon="VideoPlay"
-              size="small"
-              @click="executeActiveQuery"
-            >
-              {{ queryRunLabel }}
-            </el-button>
+            <div class="query-editor__actions">
+              <el-button
+                class="query-run-button"
+                :icon="VideoPlay"
+                size="small"
+                @click="executeActiveQuery"
+              >
+                {{ queryRunLabel }}
+              </el-button>
+              <el-button
+                class="query-run-button"
+                :icon="DocumentChecked"
+                size="small"
+                @click="saveActiveQuery"
+              >
+                保存
+              </el-button>
+            </div>
           </div>
           <div ref="queryEditorRoot" class="query-editor__host" :class="{ ready: queryEditorReady }" />
         </div>
-        <div v-if="tableSearchOpen" class="table-search">
+        <div v-if="shouldShowResultPanel && tableSearchOpen" class="table-search">
           <el-icon><Search /></el-icon>
           <input
             ref="searchInputRef"
@@ -1627,7 +2395,7 @@ function handlePageChange(page) {
             <el-icon><Close /></el-icon>
           </button>
         </div>
-        <div class="virtual-table" @contextmenu.prevent="openCopyContextMenu">
+        <div v-if="shouldShowResultPanel" class="virtual-table" @contextmenu.prevent="openCopyContextMenu">
           <div class="virtual-table__header-wrap">
             <div class="virtual-table__gutter-head" />
             <div
@@ -1658,6 +2426,7 @@ function handlePageChange(page) {
                   :class="{ selected: isResultRowSelected(visibleIndex) }"
                   @mousedown.prevent="startResultRowSelection($event, visibleIndex)"
                   @mouseenter="extendResultRowSelection(visibleIndex)"
+                  @contextmenu.prevent.stop="openCopyContextMenu($event, absoluteResultRowIndex(visibleIndex))"
                 />
                 <div class="virtual-table__spacer" :style="{ height: `${visibleTableRows.bottom}px` }" />
               </div>
@@ -1666,23 +2435,39 @@ function handlePageChange(page) {
                 <div
                   v-for="(row, visibleIndex) in visibleTableRows.rows"
                   :key="visibleTableRows.start + visibleIndex"
-                  class="virtual-table__row"
-                  :class="{ selected: isResultRowSelected(visibleIndex) }"
-                  :style="{ gridTemplateColumns: tableGridTemplate }"
-                >
+                class="virtual-table__row"
+                :class="{ selected: isResultRowSelected(visibleIndex) }"
+                :style="{ gridTemplateColumns: tableGridTemplate }"
+                @contextmenu.prevent.stop="openCopyContextMenu($event, absoluteResultRowIndex(visibleIndex))"
+              >
               <div
                 v-for="(column, columnIndex) in tableColumns"
                 :key="column.key"
                 class="virtual-table__cell"
                 :class="{
                   selected: isResultCellSelected(visibleIndex, columnIndex),
+                  changed: isChangedResultCell(row, column),
+                  'is-new-row': isNewResultRow(row),
                   matched: hasTableSearch && tableCellValue(row, column).toLowerCase().includes(normalizedTableSearch),
                 }"
                 :title="tableCellValue(row, column)"
                 @mousedown.prevent="startResultCellSelection($event, visibleIndex, columnIndex)"
                 @mouseenter="extendResultCellSelection(visibleIndex, columnIndex)"
+                @contextmenu.prevent.stop="openCopyContextMenu($event, absoluteResultRowIndex(visibleIndex), columnIndex)"
+                @dblclick.stop="startCellEdit(absoluteResultRowIndex(visibleIndex), columnIndex)"
               >
-                {{ tableCellValue(row, column) }}
+                <input
+                  v-if="isEditingResultCell(row, column)"
+                  v-model="editingCell.value"
+                  class="virtual-table__cell-input"
+                  type="text"
+                  autofocus
+                  @mousedown.stop
+                  @blur="commitCellEdit"
+                  @keydown.enter.prevent="commitCellEdit"
+                  @keydown.esc.prevent="cancelCellEdit"
+                />
+                <template v-else>{{ tableCellValue(row, column) }}</template>
               </div>
                 </div>
                 <div class="virtual-table__spacer" :style="{ height: `${visibleTableRows.bottom}px` }" />
@@ -1690,7 +2475,39 @@ function handlePageChange(page) {
             </div>
           </div>
         </div>
-        <footer class="table-footer">
+        <footer v-if="shouldShowResultPanel" class="table-footer">
+          <div class="table-footer__tools" aria-label="数据工具">
+            <button type="button" class="table-footer__tool" title="新增记录" :disabled="!canEditActiveResult" @click="addResultRow">
+              <el-icon><Plus /></el-icon>
+            </button>
+            <button
+              type="button"
+              class="table-footer__tool"
+              title="删除记录"
+              :disabled="activeTopTab.kind !== 'table' || selectedResultRows().length === 0"
+              @click="deleteSelectedRecords"
+            >
+              <el-icon><Minus /></el-icon>
+            </button>
+            <span class="table-footer__tool-separator" />
+            <button type="button" class="table-footer__tool" title="提交更改" :disabled="!hasPendingTableChanges || loading" @click="commitTableChanges">
+              <el-icon><Check /></el-icon>
+            </button>
+            <button type="button" class="table-footer__tool" title="取消更改" :disabled="!hasPendingTableChanges" @click="cancelTableChanges">
+              <el-icon><Close /></el-icon>
+            </button>
+            <span class="table-footer__tool-separator" />
+            <button type="button" class="table-footer__tool" title="刷新" :disabled="loading" @click="refreshActiveResult">
+              <el-icon><Refresh /></el-icon>
+            </button>
+            <button
+              type="button"
+              class="table-footer__tool table-footer__tool--block"
+              title="停止"
+              :disabled="!canStopActiveOperation"
+              @click="stopActiveOperation"
+            />
+          </div>
           <span v-if="activeResult" class="table-footer__summary">
             <template v-if="activeTopTab.kind === 'table'">
               第 {{ activeResult.page }} 页 · 显示 {{ searchedResultRows.length }} / {{ activeResult.totalRows }} 行 · {{ activeResult.elapsedMs }}ms
@@ -1717,7 +2534,7 @@ function handlePageChange(page) {
 
     <ContextMenu
       v-model="copyContextOpen"
-      :items="[{ key: 'copy', label: '复制', disabled: !selectedCopyText() }]"
+      :items="copyContextItems"
       :x="copyContextPosition.x"
       :y="copyContextPosition.y"
       @select="handleCopyContextSelect"
@@ -1907,14 +2724,29 @@ function handlePageChange(page) {
   background: var(--panel);
 }
 
+.query-tab-empty .query-editor {
+  flex: 1 1 auto;
+  border-bottom: 0;
+}
+
 .query-editor__bar {
   display: flex;
   align-items: center;
-  justify-content: space-between;
   min-height: 38px;
   padding: 0 8px 0 10px;
   border-bottom: 1px solid var(--line);
   background: var(--surface-muted);
+}
+
+.query-editor__actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+}
+
+.query-editor__actions :deep(.el-button + .el-button) {
+  margin-left: 0;
 }
 
 .query-editor__bar :deep(.query-schema-select) {
@@ -2370,6 +3202,30 @@ function handlePageChange(page) {
   box-shadow: inset 0 0 0 1px rgba(242, 107, 58, 0.18);
 }
 
+.virtual-table__cell.changed {
+  background: #fff4cf;
+  box-shadow: inset 0 -2px 0 #d9a621;
+}
+
+.virtual-table__cell.is-new-row {
+  background: #eaf7ef;
+  box-shadow: inset 0 -2px 0 #5aa469;
+}
+
+.virtual-table__cell-input {
+  width: calc(100% + 12px);
+  height: 26px;
+  margin: 0 -6px;
+  padding: 0 6px;
+  border: 1px solid var(--orange);
+  border-radius: 4px;
+  outline: none;
+  background: #fff;
+  color: var(--text);
+  font: inherit;
+  line-height: 24px;
+}
+
 .virtual-table__cell.matched {
   background: #fff7d6;
   color: var(--text);
@@ -2391,24 +3247,84 @@ function handlePageChange(page) {
 
 .table-footer {
   display: flex;
-  flex: 0 0 44px;
+  flex: 0 0 38px;
   align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  min-height: 44px;
-  padding: 0 12px;
+  justify-content: flex-start;
+  gap: 10px;
+  min-height: 38px;
+  padding: 0 10px;
   border-top: 1px solid var(--line);
   background: var(--surface-muted);
   font-size: 12px;
   font-weight: 400;
 }
 
+.table-footer__tools {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+
+.table-footer__tool {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: #686d76;
+  cursor: pointer;
+  appearance: none;
+}
+
+.table-footer__tool .el-icon {
+  font-size: 16px;
+  font-weight: 700;
+}
+
+.table-footer__tool:hover:not(:disabled) {
+  background: var(--surface-strong);
+  color: var(--text);
+}
+
+.table-footer__tool:active:not(:disabled) {
+  background: #e8e9ec;
+}
+
+.table-footer__tool:disabled {
+  color: #c6c9ce;
+  cursor: default;
+}
+
+.table-footer__tool--block {
+  width: 22px;
+}
+
+.table-footer__tool--block::before {
+  width: 14px;
+  height: 14px;
+  border-radius: 2px;
+  background: currentColor;
+  content: "";
+}
+
+.table-footer__tool-separator {
+  width: 8px;
+  height: 1px;
+}
+
 .table-footer__summary {
   flex: 0 0 auto;
+  margin-left: 4px;
   color: var(--muted);
   font-size: 12px;
   font-weight: 400;
-  line-height: 28px;
+  line-height: 24px;
 }
 
 .table-footer :deep(.el-pagination) {
@@ -2418,13 +3334,13 @@ function handlePageChange(page) {
   --el-pagination-button-disabled-color: var(--faint);
   --el-pagination-hover-color: var(--orange);
   --el-pagination-font-size: 12px;
-  --el-pagination-button-width: 28px;
-  --el-pagination-button-height: 28px;
+  --el-pagination-button-width: 24px;
+  --el-pagination-button-height: 24px;
   margin-left: auto;
   color: var(--muted);
   font-size: 12px;
   font-weight: 400;
-  line-height: 28px;
+  line-height: 24px;
 }
 
 .table-footer :deep(.el-pagination span:not([class*="suffix"])),
@@ -2436,21 +3352,21 @@ function handlePageChange(page) {
   color: var(--muted);
   font-size: 12px;
   font-weight: 400;
-  line-height: 28px;
+  line-height: 24px;
 }
 
 .table-footer :deep(.el-pagination.is-background .btn-next),
 .table-footer :deep(.el-pagination.is-background .btn-prev),
 .table-footer :deep(.el-pagination.is-background .el-pager li) {
-  min-width: 28px;
-  height: 28px;
+  min-width: 24px;
+  height: 24px;
   border: 1px solid var(--line);
   border-radius: 7px;
   background: #fff;
   color: var(--muted);
   font-size: 12px;
   font-weight: 400;
-  line-height: 26px;
+  line-height: 22px;
 }
 
 .table-footer :deep(.el-pagination.is-background .btn-next:hover),
@@ -2477,9 +3393,9 @@ function handlePageChange(page) {
 
 .table-footer :deep(.el-select__wrapper),
 .table-footer :deep(.el-input__wrapper) {
-  height: 28px;
-  min-height: 28px;
-  border-radius: 7px;
+  height: 24px;
+  min-height: 24px;
+  border-radius: 6px;
   background: #fff;
   box-shadow: 0 0 0 1px var(--line) inset;
 }

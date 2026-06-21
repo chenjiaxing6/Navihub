@@ -72,9 +72,49 @@ pub struct MysqlIndexInfo {
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
+pub struct MysqlForeignKeyInfo {
+    pub name: String,
+    pub column_name: String,
+    pub referenced_table: String,
+    pub referenced_column: String,
+    pub update_rule: String,
+    pub delete_rule: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MysqlTriggerInfo {
+    pub name: String,
+    pub timing: String,
+    pub event: String,
+    pub statement: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MysqlCheckInfo {
+    pub name: String,
+    pub expression: String,
+    pub enforced: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MysqlTableOptionsInfo {
+    pub engine: String,
+    pub collation: String,
+    pub comment: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct MysqlTableDetail {
     pub columns: Vec<MysqlColumnInfo>,
     pub indexes: Vec<MysqlIndexInfo>,
+    pub foreign_keys: Vec<MysqlForeignKeyInfo>,
+    pub triggers: Vec<MysqlTriggerInfo>,
+    pub checks: Vec<MysqlCheckInfo>,
+    pub options: MysqlTableOptionsInfo,
     pub ddl: String,
 }
 
@@ -419,9 +459,114 @@ pub fn mysql_describe_table(
         .and_then(|value| value.as_str().map(ToString::to_string))
         .unwrap_or_default();
 
+    let foreign_keys = conn
+        .exec_map(
+            "SELECT
+                k.CONSTRAINT_NAME,
+                k.COLUMN_NAME,
+                k.REFERENCED_TABLE_NAME,
+                k.REFERENCED_COLUMN_NAME,
+                r.UPDATE_RULE,
+                r.DELETE_RULE
+             FROM information_schema.KEY_COLUMN_USAGE k
+             JOIN information_schema.REFERENTIAL_CONSTRAINTS r
+               ON r.CONSTRAINT_SCHEMA = k.CONSTRAINT_SCHEMA
+              AND r.CONSTRAINT_NAME = k.CONSTRAINT_NAME
+             WHERE k.TABLE_SCHEMA = :schema
+               AND k.TABLE_NAME = :table
+               AND k.REFERENCED_TABLE_NAME IS NOT NULL
+             ORDER BY k.CONSTRAINT_NAME, k.ORDINAL_POSITION",
+            params! {
+                "schema" => &database,
+                "table" => &table,
+            },
+            |(name, column_name, referenced_table, referenced_column, update_rule, delete_rule): (
+                String,
+                String,
+                String,
+                String,
+                String,
+                String,
+            )| MysqlForeignKeyInfo {
+                name,
+                column_name,
+                referenced_table,
+                referenced_column,
+                update_rule,
+                delete_rule,
+            },
+        )
+        .map_err(|error| error.to_string())?;
+
+    let triggers = conn
+        .exec_map(
+            "SELECT TRIGGER_NAME, ACTION_TIMING, EVENT_MANIPULATION, ACTION_STATEMENT
+             FROM information_schema.TRIGGERS
+             WHERE TRIGGER_SCHEMA = :schema AND EVENT_OBJECT_TABLE = :table
+             ORDER BY TRIGGER_NAME",
+            params! {
+                "schema" => &database,
+                "table" => &table,
+            },
+            |(name, timing, event, statement): (String, String, String, String)| MysqlTriggerInfo {
+                name,
+                timing,
+                event,
+                statement,
+            },
+        )
+        .map_err(|error| error.to_string())?;
+
+    let checks = conn
+        .exec_map(
+            "SELECT cc.CONSTRAINT_NAME, cc.CHECK_CLAUSE, tc.ENFORCED
+             FROM information_schema.CHECK_CONSTRAINTS cc
+             JOIN information_schema.TABLE_CONSTRAINTS tc
+               ON tc.CONSTRAINT_SCHEMA = cc.CONSTRAINT_SCHEMA
+              AND tc.CONSTRAINT_NAME = cc.CONSTRAINT_NAME
+             WHERE tc.TABLE_SCHEMA = :schema AND tc.TABLE_NAME = :table
+             ORDER BY cc.CONSTRAINT_NAME",
+            params! {
+                "schema" => &database,
+                "table" => &table,
+            },
+            |(name, expression, enforced): (String, String, String)| MysqlCheckInfo {
+                name,
+                expression,
+                enforced,
+            },
+        )
+        .unwrap_or_default();
+
+    let options = conn
+        .exec_first(
+            "SELECT ENGINE, TABLE_COLLATION, TABLE_COMMENT
+             FROM information_schema.TABLES
+             WHERE TABLE_SCHEMA = :schema AND TABLE_NAME = :table",
+            params! {
+                "schema" => &database,
+                "table" => &table,
+            },
+        )
+        .map_err(|error| error.to_string())?
+        .map(|(engine, collation, comment): (Option<String>, Option<String>, Option<String>)| MysqlTableOptionsInfo {
+            engine: engine.unwrap_or_default(),
+            collation: collation.unwrap_or_default(),
+            comment: comment.unwrap_or_default(),
+        })
+        .unwrap_or(MysqlTableOptionsInfo {
+            engine: String::new(),
+            collation: String::new(),
+            comment: String::new(),
+        });
+
     Ok(MysqlTableDetail {
         columns,
         indexes,
+        foreign_keys,
+        triggers,
+        checks,
+        options,
         ddl,
     })
 }

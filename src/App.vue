@@ -61,6 +61,55 @@ const databaseActiveTopTab = computed(() =>
   dynamicTabs.value.find((tab) => tab.workspace === "database" && tab.id === activeTopTabIds.value.database) ?? null,
 );
 
+function mergeSavedQueriesIntoSchemas(schemas = [], savedQueries = []) {
+  if (!Array.isArray(schemas) || !Array.isArray(savedQueries) || savedQueries.length === 0) {
+    return schemas;
+  }
+
+  return schemas.map((schema) => {
+    const schemaQueries = savedQueries.filter((query) => query.schema === schema.name);
+    if (schemaQueries.length === 0) {
+      return schema;
+    }
+
+    const groups = Array.isArray(schema.groups) ? [...schema.groups] : [];
+    const queryGroupIndex = groups.findIndex((group) => (group.groupType ?? group.type) === "query");
+    const queryItems = schemaQueries
+      .slice()
+      .sort((first, second) => first.name.localeCompare(second.name, "zh-CN"))
+      .map((query) => ({
+        id: query.id,
+        name: query.name,
+        sql: query.sql,
+        schema: query.schema,
+        type: "query",
+      }));
+    const queryGroup = {
+      groupType: "query",
+      type: "query",
+      title: "查询",
+      count: queryItems.length,
+      items: queryItems,
+    };
+
+    if (queryGroupIndex >= 0) {
+      groups[queryGroupIndex] = queryGroup;
+    } else {
+      groups.splice(Math.min(2, groups.length), 0, queryGroup);
+    }
+
+    return { ...schema, groups };
+  });
+}
+
+function updateConnectionSchemas(connectionId, schemas) {
+  connectionList.value = connectionList.value.map((item) =>
+    item.id === connectionId
+      ? { ...item, status: "connected", schemas: mergeSavedQueriesIntoSchemas(schemas, item.savedQueries) }
+      : item,
+  );
+}
+
 function setWorkspaceActiveTopTabId(workspace, tabId) {
   activeTopTabIds.value = {
     ...activeTopTabIds.value,
@@ -106,12 +155,11 @@ async function openConnection(connection) {
     item.id === connection.id ? { ...item, status: "connecting" } : item,
   );
   activeSchemaConnectionId.value = connection.id;
+  openSchemaKeys.value = openSchemaKeys.value.filter((key) => !key.startsWith(`schema:${connection.id}:`));
 
   try {
     const schemas = await loadMysqlSchema(connection.config);
-    connectionList.value = connectionList.value.map((item) =>
-      item.id === connection.id ? { ...item, status: "connected", schemas } : item,
-    );
+    updateConnectionSchemas(connection.id, schemas);
   } catch (error) {
     connectionList.value = connectionList.value.map((item) =>
       item.id === connection.id ? { ...item, status: "disconnected" } : item,
@@ -152,15 +200,15 @@ async function refreshConnection(connection) {
 
   try {
     const schemas = await loadMysqlSchema(connection.config);
-    connectionList.value = connectionList.value.map((item) =>
-      item.id === connection.id ? { ...item, status: "connected", schemas } : item,
-    );
+    updateConnectionSchemas(connection.id, schemas);
+    const savedQueries = connectionList.value.find((item) => item.id === connection.id)?.savedQueries ?? connection.savedQueries;
+    const mergedSchemas = mergeSavedQueriesIntoSchemas(schemas, savedQueries);
     dynamicTabs.value = dynamicTabs.value.map((tab) => {
       if (tab.connectionId !== connection.id || tab.kind !== "schema") {
         return tab;
       }
 
-      const nextSchema = schemas.find((schema) => schema.name === tab.schema.name);
+      const nextSchema = mergedSchemas.find((schema) => schema.name === tab.schema.name);
       return nextSchema ? { ...tab, schema: nextSchema } : tab;
     });
     activeWorkspace.value = "database";
@@ -414,6 +462,11 @@ function duplicateConnection(connection) {
 function openTableQuery(payload) {
   selectConnection(payload.connection);
   activeSchemaConnectionId.value = payload.connection.id;
+  if (payload.groupType === "query") {
+    openSavedQuery(payload);
+    return;
+  }
+
   const tabKey = `table:${payload.connection.id}:${payload.schema}:${payload.item}`;
   const existing = dynamicTabs.value.find((tab) => tab.key === tabKey);
   if (existing) {
@@ -456,6 +509,76 @@ function createQuery(payload) {
     kind: "query",
     connectionId: payload.connection.id,
     schema: schemaName,
+    sql: "",
+    savedQueryId: null,
+  };
+  dynamicTabs.value = [...dynamicTabs.value, tab];
+  setWorkspaceActiveTopTabId("database", tab.id);
+}
+
+function openSavedQuery(payload) {
+  const schemaName = payload.schema?.name ?? payload.schema;
+  const query = typeof payload.item === "object"
+    ? payload.item
+    : payload.connection.savedQueries?.find((item) => item.schema === schemaName && item.name === payload.item);
+  if (!query) {
+    ElMessage.warning("未找到查询");
+    return;
+  }
+
+  const tabKey = `query:${payload.connection.id}:${schemaName}:${query.id}`;
+  const existing = dynamicTabs.value.find((tab) => tab.key === tabKey);
+  if (existing) {
+    setWorkspaceActiveTopTabId("database", existing.id);
+    return;
+  }
+
+  const tab = {
+    id: `query-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+    key: tabKey,
+    label: query.name,
+    workspace: "database",
+    closable: true,
+    kind: "query",
+    connectionId: payload.connection.id,
+    schema: schemaName,
+    sql: query.sql ?? "",
+    savedQueryId: query.id,
+  };
+  dynamicTabs.value = [...dynamicTabs.value, tab];
+  setWorkspaceActiveTopTabId("database", tab.id);
+}
+
+function openTableDesigner(payload) {
+  if (!payload?.connection) {
+    return;
+  }
+
+  selectConnection(payload.connection);
+  activeSchemaConnectionId.value = payload.connection.id;
+  const schemaName = payload.schema?.name ?? payload.schema;
+  const tableName = payload.table?.name ?? payload.table ?? "";
+  const mode = payload.mode ?? (tableName ? "edit" : "create");
+  const tabKey = mode === "edit"
+    ? `table-design:${payload.connection.id}:${schemaName}:${tableName}`
+    : `table-design:${payload.connection.id}:${schemaName}:new`;
+  const existing = dynamicTabs.value.find((tab) => tab.key === tabKey);
+  if (existing) {
+    setWorkspaceActiveTopTabId("database", existing.id);
+    return;
+  }
+
+  const tab = {
+    id: `table-design-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+    key: tabKey,
+    label: mode === "edit" ? `设计 ${tableName}` : "新建表",
+    workspace: "database",
+    closable: true,
+    kind: "table-design",
+    connectionId: payload.connection.id,
+    schema: schemaName,
+    table: tableName,
+    mode,
   };
   dynamicTabs.value = [...dynamicTabs.value, tab];
   setWorkspaceActiveTopTabId("database", tab.id);
@@ -467,6 +590,52 @@ function updateQuerySchema(payload) {
       ? { ...tab, schema: payload.schema }
       : tab,
   );
+}
+
+function saveQuery(payload) {
+  const savedAt = Date.now();
+  const queryId = payload.queryId ?? `saved-query-${savedAt}-${Math.random().toString(16).slice(2)}`;
+  let savedQuery = null;
+
+  connectionList.value = connectionList.value.map((connection) => {
+    if (connection.id !== payload.connectionId) {
+      return connection;
+    }
+
+    const existingQueries = Array.isArray(connection.savedQueries) ? connection.savedQueries : [];
+    const existing = existingQueries.find((query) => query.id === queryId);
+    savedQuery = {
+      id: queryId,
+      schema: payload.schema,
+      name: payload.name,
+      sql: payload.sql,
+      createdAt: existing?.createdAt ?? savedAt,
+      updatedAt: savedAt,
+    };
+    const savedQueries = existing
+      ? existingQueries.map((query) => query.id === queryId ? savedQuery : query)
+      : [...existingQueries, savedQuery];
+
+    return {
+      ...connection,
+      savedQueries,
+      schemas: mergeSavedQueriesIntoSchemas(connection.schemas, savedQueries),
+    };
+  });
+
+  dynamicTabs.value = dynamicTabs.value.map((tab) =>
+    tab.id === payload.tabId && tab.kind === "query"
+      ? {
+        ...tab,
+        key: `query:${payload.connectionId}:${payload.schema}:${queryId}`,
+        label: payload.name,
+        schema: payload.schema,
+        sql: payload.sql,
+        savedQueryId: queryId,
+      }
+      : tab,
+  );
+  ElMessage.success("查询已保存");
 }
 
 function openSchema(payload) {
@@ -613,16 +782,50 @@ function closeTopTab(tabId) {
 
 function renameTableTabs(connectionId, database, table, newTable) {
   dynamicTabs.value = dynamicTabs.value.map((tab) => {
-    if (tab.connectionId !== connectionId || tab.kind !== "table" || tab.schema !== database || tab.table !== table) {
+    if (tab.connectionId !== connectionId || !["table", "table-design"].includes(tab.kind) || tab.schema !== database || tab.table !== table) {
       return tab;
     }
 
     return {
       ...tab,
-      key: `table:${connectionId}:${database}:${newTable}`,
-      label: newTable,
+      key: tab.kind === "table"
+        ? `table:${connectionId}:${database}:${newTable}`
+        : `table-design:${connectionId}:${database}:${newTable}`,
+      label: tab.kind === "table" ? newTable : `设计 ${newTable}`,
       table: newTable,
     };
+  });
+}
+
+function handleTableDesignSaved(payload) {
+  dynamicTabs.value = dynamicTabs.value.map((tab) => {
+    if (tab.id === payload.tabId && tab.kind === "table-design") {
+      return {
+        ...tab,
+        key: `table-design:${payload.connectionId}:${payload.database}:${payload.newTable}`,
+        label: `设计 ${payload.newTable}`,
+        table: payload.newTable,
+        mode: "edit",
+      };
+    }
+
+    if (
+      !payload.wasCreate &&
+      tab.connectionId === payload.connectionId &&
+      tab.kind === "table" &&
+      tab.schema === payload.database &&
+      tab.table === payload.table &&
+      payload.table !== payload.newTable
+    ) {
+      return {
+        ...tab,
+        key: `table:${payload.connectionId}:${payload.database}:${payload.newTable}`,
+        label: payload.newTable,
+        table: payload.newTable,
+      };
+    }
+
+    return tab;
   });
 }
 
@@ -639,7 +842,7 @@ function closeDroppedObjectTabs(connectionId, result) {
   }
 
   closeTabsByIds(dynamicTabs.value
-    .filter((tab) => tab.connectionId === connectionId && tab.kind === "table" && tab.schema === result.database && tab.table === result.table)
+    .filter((tab) => tab.connectionId === connectionId && ["table", "table-design"].includes(tab.kind) && tab.schema === result.database && tab.table === result.table)
     .map((tab) => tab.id));
 }
 
@@ -650,9 +853,17 @@ async function handleDatabaseObjectAction(payload) {
     return;
   }
 
+  if (payload?.action === "design-table") {
+    openTableDesigner({ ...payload, mode: "edit" });
+    return;
+  }
+
   try {
     const result = await runDatabaseObjectAction(payload);
     if (!result?.changed) {
+      if (result?.openDesigner) {
+        openTableDesigner({ ...payload, mode: "create" });
+      }
       return;
     }
 
@@ -738,8 +949,10 @@ async function handleCreateDatabaseSubmit(form) {
       @move-connection-to-folder="moveConnectionToFolder"
       @rename-connection-folder="renameConnectionFolder"
       @refresh-connection="refreshConnection"
+      @save-query="saveQuery"
       @select-top-tab="selectTopTab"
       @schema-loaded="handleSchemaLoaded"
+      @table-design-saved="handleTableDesignSaved"
       @update-mysql-connection="updateMysqlConnection"
       @update-query-schema="updateQuerySchema"
       @update-ssh-state="updateSshState"

@@ -47,7 +47,7 @@ function close() {
 }
 
 function selectItem(item) {
-  if (item.disabled) {
+  if (item.disabled || item.children?.length) {
     return;
   }
 
@@ -92,17 +92,36 @@ onBeforeUnmount(() => {
       role="menu"
       @contextmenu.prevent
     >
-      <button
+      <component
+        :is="item.children?.length ? 'div' : 'button'"
         v-for="item in visibleItems"
         :key="item.key"
         class="context-menu__item"
-        :class="{ 'context-menu__item--danger': item.danger, 'context-menu__item--divided': item.divided }"
+        :class="{
+          'context-menu__item--danger': item.danger,
+          'context-menu__item--divided': item.divided,
+          'context-menu__item--submenu': item.children?.length,
+        }"
         :disabled="item.disabled"
         role="menuitem"
         @click="selectItem(item)"
       >
-        {{ item.label }}
-      </button>
+        <span>{{ item.label }}</span>
+        <span v-if="item.children?.length" class="context-menu__arrow">›</span>
+        <div v-if="item.children?.length" class="context-menu__submenu" role="menu">
+          <button
+            v-for="child in item.children.filter((childItem) => !childItem.hidden)"
+            :key="child.key"
+            class="context-menu__item"
+            :class="{ 'context-menu__item--danger': child.danger, 'context-menu__item--divided': child.divided }"
+            :disabled="child.disabled"
+            role="menuitem"
+            @click.stop="selectItem(child)"
+          >
+            <span>{{ child.label }}</span>
+          </button>
+        </div>
+      </component>
     </div>
   </Teleport>
 </template>
@@ -120,8 +139,11 @@ onBeforeUnmount(() => {
 }
 
 .context-menu__item {
+  position: relative;
   display: flex;
   align-items: center;
+  justify-content: space-between;
+  gap: 18px;
   width: 100%;
   min-height: 30px;
   padding: 0 9px;
@@ -135,6 +157,30 @@ onBeforeUnmount(() => {
   font-weight: 400;
   text-align: left;
   appearance: none;
+}
+
+.context-menu__arrow {
+  color: var(--faint);
+  font-size: 18px;
+  line-height: 1;
+}
+
+.context-menu__submenu {
+  display: none;
+  position: absolute;
+  top: -5px;
+  left: calc(100% + 4px);
+  min-width: 214px;
+  padding: 5px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+  box-shadow: 0 8px 24px rgba(24, 27, 35, 0.10);
+}
+
+.context-menu__item--submenu:hover .context-menu__submenu,
+.context-menu__item--submenu:focus-within .context-menu__submenu {
+  display: block;
 }
 
 .context-menu__item--divided {

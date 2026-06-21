@@ -157,6 +157,32 @@ pub fn mysql_create_table(
 }
 
 #[tauri::command]
+pub fn mysql_copy_table(
+    state: State<'_, MysqlState>,
+    config: MysqlConnectionConfig,
+    database: String,
+    table: String,
+    new_table: String,
+    copy_data: bool,
+) -> Result<(), String> {
+    let pool = pool(&state, &config, Some(&database))?;
+    let mut conn = pool.get_conn().map_err(|error| error.to_string())?;
+    let source_table = qualified_name(&database, &table)?;
+    let target_table = qualified_name(&database, &new_table)?;
+    conn.query_drop(format!("CREATE TABLE {target_table} LIKE {source_table}"))
+        .map_err(|error| error.to_string())?;
+
+    if copy_data {
+        if let Err(error) = conn.query_drop(format!("INSERT INTO {target_table} SELECT * FROM {source_table}")) {
+            let _ = conn.query_drop(format!("DROP TABLE {target_table}"));
+            return Err(error.to_string());
+        }
+    }
+
+    Ok(())
+}
+
+#[tauri::command]
 pub fn mysql_rename_table(
     state: State<'_, MysqlState>,
     config: MysqlConnectionConfig,

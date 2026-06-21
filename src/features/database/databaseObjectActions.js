@@ -1,7 +1,7 @@
 import { ElMessage } from "element-plus/es/components/message/index";
 import { ElMessageBox } from "element-plus/es/components/message-box/index";
 import {
-  createMysqlTable,
+  copyMysqlTable,
   dropMysqlDatabase,
   dropMysqlTable,
   renameMysqlTable,
@@ -52,11 +52,7 @@ export async function runDatabaseObjectAction(payload) {
   }
 
   if (payload.action === "create-table" && schemaName) {
-    const table = await promptName("输入表名称，将创建一个带 id 主键的空表", "新建表");
-    if (!table) return null;
-    await createMysqlTable(config, schemaName, table);
-    ElMessage.success("表已创建");
-    return { changed: true, type: "create-table", database: schemaName, table };
+    return { openDesigner: true, type: "create-table", database: schemaName };
   }
 
   if (payload.action === "rename-table" && schemaName && tableName) {
@@ -65,6 +61,17 @@ export async function runDatabaseObjectAction(payload) {
     await renameMysqlTable(config, schemaName, tableName, newTable);
     ElMessage.success("表已重命名");
     return { changed: true, type: "rename-table", database: schemaName, table: tableName, newTable };
+  }
+
+  if ((payload.action === "copy-table-structure" || payload.action === "copy-table-data") && schemaName && tableName) {
+    const suffix = payload.action === "copy-table-data" ? "_copy" : "_struct";
+    const newTable = await promptName("输入复制后的表名称", "复制表", `${tableName}${suffix}`);
+    if (!newTable) return null;
+    await copyMysqlTable(config, schemaName, tableName, newTable, {
+      copyData: payload.action === "copy-table-data",
+    });
+    ElMessage.success(payload.action === "copy-table-data" ? "表结构和数据已复制" : "表结构已复制");
+    return { changed: true, type: "copy-table", database: schemaName, table: tableName, newTable };
   }
 
   if (payload.action === "drop-table" && schemaName && tableName) {

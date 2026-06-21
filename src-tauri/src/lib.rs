@@ -19,6 +19,7 @@ pub fn run() {
             database::mysql_admin::mysql_list_database_options,
             database::mysql_admin::mysql_drop_database,
             database::mysql_admin::mysql_create_table,
+            database::mysql_admin::mysql_copy_table,
             database::mysql_admin::mysql_rename_table,
             database::mysql_admin::mysql_drop_table,
             monitor::system::monitor_snapshot,

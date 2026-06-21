@@ -46,3 +46,24 @@ export function emptyMysqlTable(config, database, table) {
 export function truncateMysqlTable(config, database, table) {
   return invoke("mysql_truncate_table", { config, database, table });
 }
+
+export function exportMysqlTablesSql(config, database, tables, options = {}) {
+  return invoke("mysql_export_tables_sql", {
+    config,
+    database,
+    tables,
+    includeData: options.includeData !== false,
+  });
+}
+
+export function exportMysqlDatabaseSql(config, database, options = {}) {
+  return invoke("mysql_export_database_sql", {
+    config,
+    database,
+    includeData: options.includeData !== false,
+  });
+}
+
+export function importMysqlSql(config, database, sql) {
+  return invoke("mysql_import_sql", { config, database, sql });
+}

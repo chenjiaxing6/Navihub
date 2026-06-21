@@ -1,10 +1,15 @@
 import { ElMessage } from "element-plus/es/components/message/index";
 import { ElMessageBox } from "element-plus/es/components/message-box/index";
+import { open, save } from "@tauri-apps/plugin-dialog";
+import { readTextFile, writeTextFile } from "@tauri-apps/plugin-fs";
 import {
   copyMysqlTable,
   dropMysqlDatabase,
   dropMysqlTable,
   emptyMysqlTable,
+  exportMysqlDatabaseSql,
+  exportMysqlTablesSql,
+  importMysqlSql,
   renameMysqlTable,
   truncateMysqlTable,
 } from "./mysqlAdminApi";
@@ -50,6 +55,43 @@ async function promptName(message, title, inputValue = "") {
   return trimName(value);
 }
 
+function safeFileName(value) {
+  return String(value ?? "export")
+    .trim()
+    .replace(/[\\/:*?"<>|]+/g, "_")
+    .replace(/\s+/g, "_") || "export";
+}
+
+async function chooseSqlExportPath(database, tables) {
+  const tablePart = tables.length === 1 ? tables[0] : `${tables.length}_tables`;
+  const path = await save({
+    title: "导出表为 SQL",
+    defaultPath: `${safeFileName(database)}_${safeFileName(tablePart)}.sql`,
+    canCreateDirectories: true,
+    filters: [{ name: "SQL", extensions: ["sql"] }],
+  });
+  return typeof path === "string" ? path : "";
+}
+
+async function chooseDatabaseSqlExportPath(database) {
+  const path = await save({
+    title: "导出库为 SQL",
+    defaultPath: `${safeFileName(database)}.sql`,
+    canCreateDirectories: true,
+    filters: [{ name: "SQL", extensions: ["sql"] }],
+  });
+  return typeof path === "string" ? path : "";
+}
+
+async function chooseSqlImportPath() {
+  const path = await open({
+    title: "导入 SQL 文件",
+    multiple: false,
+    filters: [{ name: "SQL", extensions: ["sql"] }],
+  });
+  return typeof path === "string" ? path : "";
+}
+
 export async function runDatabaseObjectAction(payload) {
   if (!payload?.connection?.config) {
     return null;
@@ -59,6 +101,31 @@ export async function runDatabaseObjectAction(payload) {
   const schemaName = payload.schema?.name ?? payload.schema;
   const tableName = payload.table?.name ?? payload.table;
   const tableNames = Array.isArray(payload.tables) ? [...new Set(payload.tables.filter(Boolean))] : [];
+
+  if (payload.action === "import-sql" && schemaName) {
+    const path = await chooseSqlImportPath();
+    if (!path) return null;
+    const sql = await readTextFile(path);
+    await ElMessageBox.confirm(`确认将 SQL 文件导入到库“${schemaName}”？`, "导入 SQL", {
+      confirmButtonText: "导入",
+      cancelButtonText: "取消",
+      type: "warning",
+      customClass: "bruno-message-box",
+      dangerouslyUseHTMLString: false,
+    });
+    await importMysqlSql(config, schemaName, sql);
+    ElMessage.success("SQL 已导入");
+    return { changed: true, type: "import-sql", database: schemaName };
+  }
+
+  if (payload.action === "export-database-sql" && schemaName) {
+    const path = await chooseDatabaseSqlExportPath(schemaName);
+    if (!path) return null;
+    const sql = await exportMysqlDatabaseSql(config, schemaName, { includeData: true });
+    await writeTextFile(path, sql);
+    ElMessage.success("库已导出");
+    return { changed: false, type: "export-database-sql", database: schemaName };
+  }
 
   if (payload.action === "drop-database" && schemaName) {
     await ElMessageBox.confirm(`确认删除库“${schemaName}”？此操作会删除库内所有对象。`, "删除库", confirmOptions);
@@ -88,6 +155,22 @@ export async function runDatabaseObjectAction(payload) {
     });
     ElMessage.success(payload.action === "copy-table-data" ? "表结构和数据已复制" : "表结构已复制");
     return { changed: true, type: "copy-table", database: schemaName, table: tableName, newTable };
+  }
+
+  if (payload.action === "export-table-sql" && schemaName && (tableName || tableNames.length > 0)) {
+    const targetTables = tableNames.length > 0 ? tableNames : [tableName];
+    const path = await chooseSqlExportPath(schemaName, targetTables);
+    if (!path) return null;
+    const sql = await exportMysqlTablesSql(config, schemaName, targetTables, { includeData: true });
+    await writeTextFile(path, sql);
+    ElMessage.success(targetTables.length > 1 ? `已导出 ${targetTables.length} 张表` : "表已导出");
+    return {
+      changed: false,
+      type: "export-table-sql",
+      database: schemaName,
+      table: targetTables.length === 1 ? targetTables[0] : undefined,
+      tables: targetTables.length > 1 ? targetTables : undefined,
+    };
   }
 
   if (tableDataActionMeta[payload.action] && schemaName && (tableName || tableNames.length > 0)) {

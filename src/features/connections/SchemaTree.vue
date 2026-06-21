@@ -351,6 +351,8 @@ function includesQuery(value, query) {
         { key: 'create-query', label: '新建查询' },
         { key: 'create-database', label: '新建库', divided: true },
         { key: 'create-table', label: '新建表' },
+        { key: 'import-sql', label: '导入 SQL', divided: true },
+        { key: 'export-database-sql', label: '导出库为 SQL' },
         { key: 'drop-database', label: '删除库', danger: true, divided: true },
       ]"
       :x="schemaContextPosition.x"
@@ -364,6 +366,7 @@ function includesQuery(value, query) {
         { key: 'create-table', label: '新建表', hidden: contextObject?.groupType !== 'table' },
         { key: 'copy-table-structure', label: '复制表结构', hidden: contextObject?.groupType !== 'table' },
         { key: 'copy-table-data', label: '复制结构和数据', hidden: contextObject?.groupType !== 'table' },
+        { key: 'export-table-sql', label: '导出为 SQL', hidden: contextObject?.groupType !== 'table' },
         { key: 'rename-table', label: '重命名表', hidden: contextObject?.groupType !== 'table' },
         { key: 'empty-table', label: '清空表', danger: true, divided: true, hidden: contextObject?.groupType !== 'table' },
         { key: 'truncate-table', label: '截断表', danger: true, hidden: contextObject?.groupType !== 'table' },

@@ -6,7 +6,9 @@
   "permissions": [
     "core:default",
     "core:event:default",
+    "dialog:allow-open",
     "dialog:allow-save",
+    "fs:allow-read-text-file",
     "fs:allow-write-file",
     "opener:default"
   ]

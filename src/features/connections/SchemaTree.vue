@@ -11,12 +11,15 @@ const props = defineProps({
   loading: { type: Boolean, default: false },
 });
 
-const emit = defineEmits(["activate-schema", "create-query", "open-schema", "open-table-query"]);
+const emit = defineEmits(["activate-schema", "create-query", "open-schema", "open-table-query", "database-object-action"]);
 const selectedKey = ref("");
 const openGroupKeys = ref(new Set());
 const schemaContextOpen = ref(false);
 const schemaContextPosition = ref({ x: 0, y: 0 });
 const contextSchema = ref(null);
+const objectContextOpen = ref(false);
+const objectContextPosition = ref({ x: 0, y: 0 });
+const contextObject = ref(null);
 const normalizedSearch = computed(() => props.searchQuery.trim().toLowerCase());
 const hasSearch = computed(() => Boolean(normalizedSearch.value));
 const filteredSchemas = computed(() => {
@@ -119,10 +122,42 @@ function openSchemaContextMenu(event, schema) {
   schemaContextOpen.value = true;
 }
 
-function handleSchemaContextSelect(item) {
-  if (item.key === "create-query" && contextSchema.value) {
-    emit("create-query", { schema: contextSchema.value });
+function openObjectContextMenu(event, schema, group, item) {
+  event.preventDefault();
+  if (groupType(group) !== "table") {
+    return;
   }
+
+  const key = `${schemaKey(schema)}:${groupType(group)}:${itemName(item)}`;
+  contextObject.value = { schema, groupType: groupType(group), item: itemName(item) };
+  selectedKey.value = key;
+  objectContextPosition.value = { x: event.clientX, y: event.clientY };
+  objectContextOpen.value = true;
+}
+
+function handleSchemaContextSelect(item) {
+  if (!contextSchema.value) {
+    return;
+  }
+
+  if (item.key === "create-query") {
+    emit("create-query", { schema: contextSchema.value });
+  } else {
+    emit("database-object-action", { action: item.key, schema: contextSchema.value });
+  }
+}
+
+function handleObjectContextSelect(item) {
+  if (!contextObject.value) {
+    return;
+  }
+
+  emit("database-object-action", {
+    action: item.key,
+    schema: contextObject.value.schema,
+    groupType: contextObject.value.groupType,
+    table: contextObject.value.item,
+  });
 }
 
 function itemName(item) {
@@ -182,6 +217,7 @@ function includesQuery(value, query) {
           :class="{ selected: selectedKey === `${schemaKey(schema)}:${groupType(group)}:${itemName(item)}` }"
           @click.prevent="selectOnly(`${schemaKey(schema)}:${groupType(group)}:${itemName(item)}`)"
           @dblclick="emit('open-table-query', { schema: schema.name, groupType: groupType(group), item: itemName(item) })"
+          @contextmenu.prevent="openObjectContextMenu($event, schema, group, item)"
         >
           <span class="object-icon" :class="itemIconClass[groupType(group)] ?? 'object-icon-default'" />
           {{ itemName(item) }}
@@ -191,10 +227,26 @@ function includesQuery(value, query) {
 
     <ContextMenu
       v-model="schemaContextOpen"
-      :items="[{ key: 'create-query', label: '新建查询' }]"
+      :items="[
+        { key: 'create-query', label: '新建查询' },
+        { key: 'create-database', label: '新建库', divided: true },
+        { key: 'create-table', label: '新建表' },
+        { key: 'drop-database', label: '删除库', danger: true, divided: true },
+      ]"
       :x="schemaContextPosition.x"
       :y="schemaContextPosition.y"
       @select="handleSchemaContextSelect"
+    />
+    <ContextMenu
+      v-model="objectContextOpen"
+      :items="[
+        { key: 'create-table', label: '新建表', hidden: contextObject?.groupType !== 'table' },
+        { key: 'rename-table', label: '重命名表', hidden: contextObject?.groupType !== 'table' },
+        { key: 'drop-table', label: '删除表', danger: true, divided: true, hidden: contextObject?.groupType !== 'table' },
+      ]"
+      :x="objectContextPosition.x"
+      :y="objectContextPosition.y"
+      @select="handleObjectContextSelect"
     />
   </div>
 </template>

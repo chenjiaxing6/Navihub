@@ -1,11 +1,9 @@
 <script setup>
-import { computed, onBeforeUnmount, ref, watch } from "vue";
+import { computed, defineAsyncComponent, onBeforeUnmount, ref, watch } from "vue";
 import { FolderAdd, Plus } from "@element-plus/icons-vue";
 import ModuleRail from "./ModuleRail.vue";
 import WorkspaceTabs from "./WorkspaceTabs.vue";
 import ConnectionExplorer from "../features/connections/ConnectionExplorer.vue";
-import DatabaseWorkspace from "../features/database/DatabaseWorkspace.vue";
-import SshWorkspace from "../features/terminal/SshWorkspace.vue";
 import { workspaces } from "../shared/workspaces";
 
 const activeWorkspace = defineModel("activeWorkspace", { type: String, required: true });
@@ -34,6 +32,7 @@ const emit = defineEmits([
   "create-connection-folder",
   "delete-connection",
   "delete-connection-folder",
+  "database-object-action",
   "duplicate-connection",
   "edit-connection",
   "activate-schema",
@@ -60,6 +59,11 @@ const emit = defineEmits([
 const currentWorkspace = computed(() =>
   workspaces.find((workspace) => workspace.id === activeWorkspace.value) ?? workspaces[0],
 );
+const workspaceComponents = {
+  database: defineAsyncComponent(() => import("../features/database/DatabaseWorkspace.vue")),
+  ssh: defineAsyncComponent(() => import("../features/terminal/SshWorkspace.vue")),
+};
+const activeWorkspaceComponent = computed(() => workspaceComponents[activeWorkspace.value] ?? workspaceComponents.database);
 const searchQuery = ref("");
 const sidebarWidths = ref({
   database: 316,
@@ -168,6 +172,7 @@ function stopSidebarResize() {
         @duplicate-connection="emit('duplicate-connection', $event)"
         @edit-connection="emit('edit-connection', $event)"
         @create-query="emit('create-query', $event)"
+        @database-object-action="emit('database-object-action', $event)"
         @move-connection-to-folder="emit('move-connection-to-folder', $event)"
         @open-schema="emit('open-schema', $event)"
         @open-table-query="emit('open-table-query', $event)"
@@ -197,23 +202,22 @@ function stopSidebarResize() {
         @select-tab="emit('select-top-tab', $event)"
       />
 
-      <DatabaseWorkspace
-        v-show="activeWorkspace === 'database'"
-        :connection="props.databaseConnection"
-        :active-top-tab="props.databaseActiveTopTab"
-        :pending-schema-open="props.pendingSchemaOpen"
-        :pending-table-query="props.pendingTableQuery"
-        @open-table-query="emit('open-table-query', $event)"
-        @schema-loaded="emit('schema-loaded', $event)"
-        @update-connection="emit('update-mysql-connection', $event)"
-        @update-query-schema="emit('update-query-schema', $event)"
-      />
-      <SshWorkspace
-        v-show="activeWorkspace === 'ssh'"
-        :connection="props.sshConnection"
-        :terminal-theme="props.terminalTheme"
-        @connection-state="emit('update-ssh-state', $event)"
-      />
+      <KeepAlive>
+        <component
+          :is="activeWorkspaceComponent"
+          :key="activeWorkspace"
+          :connection="activeWorkspace === 'database' ? props.databaseConnection : props.sshConnection"
+          :active-top-tab="props.databaseActiveTopTab"
+          :pending-schema-open="props.pendingSchemaOpen"
+          :pending-table-query="props.pendingTableQuery"
+          :terminal-theme="props.terminalTheme"
+          @connection-state="emit('update-ssh-state', $event)"
+          @open-table-query="emit('open-table-query', $event)"
+          @schema-loaded="emit('schema-loaded', $event)"
+          @update-connection="emit('update-mysql-connection', $event)"
+          @update-query-schema="emit('update-query-schema', $event)"
+        />
+      </KeepAlive>
     </section>
   </main>
 </template>

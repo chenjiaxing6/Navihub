@@ -26,6 +26,7 @@ const emit = defineEmits([
   "select-connection",
   "open-connection",
   "create-query",
+  "database-object-action",
   "open-schema",
   "open-table-query",
   "delete-folder",
@@ -105,6 +106,7 @@ const connectionContextItems = computed(() => {
     { key: "open", label: "连接", disabled: connected || connecting },
     { key: "close", label: "断开", disabled: !connected && !connecting },
     { key: "refresh", label: "刷新", disabled: connection?.workspace !== "database" },
+    { key: "create-database", label: "新建库", disabled: connection?.workspace !== "database" || !connected },
     { key: "edit", label: "编辑", divided: true },
     { key: "duplicate", label: "复制连接" },
     { key: "move:none", label: "移到未归档", disabled: !connection?.folderId, divided: true },
@@ -144,6 +146,8 @@ function handleConnectionContextSelect(item) {
     emit("close-connection", contextConnection.value);
   } else if (item.key === "refresh") {
     emit("refresh-connection", contextConnection.value);
+  } else if (item.key === "create-database") {
+    emit("database-object-action", { connection: contextConnection.value, action: "create-database" });
   } else if (item.key === "edit") {
     emit("edit-connection", contextConnection.value);
   } else if (item.key === "duplicate") {
@@ -333,6 +337,7 @@ function itemName(item) {
               :schemas="connection.id === activeConnection?.id ? activeConnection.schemas : connection.schemas"
               @activate-schema="(payload) => emit('activate-schema', { connection, ...payload })"
               @create-query="(payload) => emit('create-query', { connection, ...payload })"
+              @database-object-action="(payload) => emit('database-object-action', { connection, ...payload })"
               @open-schema="(payload) => emit('open-schema', { connection, ...payload })"
               @open-table-query="(payload) => emit('open-table-query', { connection, ...payload })"
             />
@@ -417,6 +422,7 @@ function itemName(item) {
         :schemas="connection.id === activeConnection?.id ? activeConnection.schemas : connection.schemas"
         @activate-schema="(payload) => emit('activate-schema', { connection, ...payload })"
         @create-query="(payload) => emit('create-query', { connection, ...payload })"
+        @database-object-action="(payload) => emit('database-object-action', { connection, ...payload })"
         @open-schema="(payload) => emit('open-schema', { connection, ...payload })"
         @open-table-query="(payload) => emit('open-table-query', { connection, ...payload })"
       />

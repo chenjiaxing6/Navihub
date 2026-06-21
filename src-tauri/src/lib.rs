@@ -6,6 +6,7 @@ mod ssh;
 pub fn run() {
     tauri::Builder::default()
         .manage(ssh::session::SshState::default())
+        .manage(database::mysql::MysqlState::default())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_opener::init())
@@ -14,6 +15,12 @@ pub fn run() {
             database::mysql::mysql_load_schema,
             database::mysql::mysql_execute_query,
             database::mysql::mysql_describe_table,
+            database::mysql_admin::mysql_create_database,
+            database::mysql_admin::mysql_list_database_options,
+            database::mysql_admin::mysql_drop_database,
+            database::mysql_admin::mysql_create_table,
+            database::mysql_admin::mysql_rename_table,
+            database::mysql_admin::mysql_drop_table,
             monitor::system::monitor_snapshot,
             monitor::system::monitor_kill_process,
             monitor::system::monitor_stop_container,

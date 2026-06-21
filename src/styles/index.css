@@ -353,7 +353,9 @@ select,
 }
 
 .el-dialog.connection-dialog,
-.connection-dialog.el-dialog {
+.connection-dialog.el-dialog,
+.el-dialog.database-object-dialog,
+.database-object-dialog.el-dialog {
   overflow: hidden;
   border: 1px solid var(--line);
   border-radius: 10px;
@@ -363,7 +365,9 @@ select,
 }
 
 .el-dialog.connection-dialog .el-dialog__header,
-.connection-dialog.el-dialog .el-dialog__header {
+.connection-dialog.el-dialog .el-dialog__header,
+.el-dialog.database-object-dialog .el-dialog__header,
+.database-object-dialog.el-dialog .el-dialog__header {
   min-height: 46px;
   margin: 0;
   padding: 0;
@@ -371,7 +375,8 @@ select,
   background: var(--surface-muted);
 }
 
-.connection-dialog__header {
+.connection-dialog__header,
+.database-object-dialog__header {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -380,13 +385,15 @@ select,
   padding: 0 10px 0 13px;
 }
 
-.connection-dialog__header strong {
+.connection-dialog__header strong,
+.database-object-dialog__header strong {
   color: var(--text);
   font-size: 13px;
   font-weight: 780;
 }
 
-.connection-dialog__close {
+.connection-dialog__close,
+.database-object-dialog__close {
   display: grid;
   place-items: center;
   width: 28px;
@@ -400,28 +407,40 @@ select,
   line-height: 1;
 }
 
-.connection-dialog__close:hover {
+.connection-dialog__close:hover,
+.database-object-dialog__close:hover:not(:disabled) {
   background: var(--surface-strong);
   color: var(--text);
 }
 
-.connection-dialog__close:active {
+.connection-dialog__close:active,
+.database-object-dialog__close:active:not(:disabled) {
   background: #e8e9ec;
 }
 
+.database-object-dialog__close:disabled {
+  color: var(--faint);
+  cursor: default;
+}
+
 .el-dialog.connection-dialog .el-dialog__body,
-.connection-dialog.el-dialog .el-dialog__body {
+.connection-dialog.el-dialog .el-dialog__body,
+.el-dialog.database-object-dialog .el-dialog__body,
+.database-object-dialog.el-dialog .el-dialog__body {
   padding: 14px;
 }
 
 .el-dialog.connection-dialog .el-dialog__footer,
-.connection-dialog.el-dialog .el-dialog__footer {
+.connection-dialog.el-dialog .el-dialog__footer,
+.el-dialog.database-object-dialog .el-dialog__footer,
+.database-object-dialog.el-dialog .el-dialog__footer {
   padding: 10px 13px;
   border-top: 1px solid var(--line);
   background: var(--surface-muted);
 }
 
-.connection-dialog .connection-form {
+.connection-dialog .connection-form,
+.database-object-dialog .database-object-form {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
   column-gap: 12px;
@@ -432,11 +451,13 @@ select,
   grid-column: 1 / -1;
 }
 
-.connection-dialog .el-form-item {
+.connection-dialog .el-form-item,
+.database-object-dialog .el-form-item {
   margin-bottom: 0;
 }
 
-.connection-dialog .el-form-item__label {
+.connection-dialog .el-form-item__label,
+.database-object-dialog .el-form-item__label {
   height: auto;
   margin-bottom: 5px;
   padding: 0;
@@ -447,32 +468,43 @@ select,
 }
 
 .connection-dialog .el-input__wrapper,
-.connection-dialog .el-input-number .el-input__wrapper {
+.connection-dialog .el-input-number .el-input__wrapper,
+.database-object-dialog .el-input__wrapper,
+.database-object-dialog .el-select__wrapper {
   min-height: 32px;
   border-radius: 8px;
   background: #fff;
   box-shadow: 0 0 0 1px var(--line) inset;
 }
 
-.connection-dialog .el-input__inner {
+.connection-dialog .el-input__inner,
+.database-object-dialog .el-input__inner,
+.database-object-dialog .el-select__selected-item,
+.database-object-dialog .el-select__placeholder {
   color: var(--text);
   font-size: 12px;
 }
 
-.connection-dialog .el-input__inner::placeholder {
+.connection-dialog .el-input__inner::placeholder,
+.database-object-dialog .el-input__inner::placeholder {
   color: var(--faint);
 }
 
 .connection-dialog .el-input__wrapper.is-focus,
-.connection-dialog .el-input-number .el-input__wrapper.is-focus {
+.connection-dialog .el-input-number .el-input__wrapper.is-focus,
+.database-object-dialog .el-input__wrapper.is-focus,
+.database-object-dialog .el-select__wrapper.is-focused {
   box-shadow: 0 0 0 1px var(--orange) inset, 0 0 0 3px rgba(242, 107, 58, 0.13);
 }
 
-.connection-dialog .el-input-number {
+.connection-dialog .el-input-number,
+.database-object-dialog .el-input,
+.database-object-dialog .el-select {
   width: 100%;
 }
 
-.connection-dialog .el-button {
+.connection-dialog .el-button,
+.database-object-dialog .el-button {
   height: 31px;
   padding: 0 13px;
   border: 1px solid var(--line);
@@ -483,22 +515,82 @@ select,
   font-weight: 650;
 }
 
-.connection-dialog .el-button:hover {
+.connection-dialog .el-button:hover,
+.database-object-dialog .el-button:hover {
   border-color: var(--line-strong);
   background: var(--surface-strong);
   color: var(--text);
 }
 
-.connection-dialog .el-button--primary {
+.connection-dialog .el-button--primary,
+.database-object-dialog .el-button--primary {
   border-color: var(--orange);
   background: var(--orange);
   color: #fff;
 }
 
-.connection-dialog .el-button--primary:hover {
+.connection-dialog .el-button--primary:hover,
+.database-object-dialog .el-button--primary:hover {
   border-color: #e65d2e;
   background: #e65d2e;
   color: #fff;
+}
+
+.database-object-select-popper.el-popper {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+  box-shadow: 0 10px 28px rgba(24, 27, 35, 0.12);
+}
+
+.database-object-select-popper .el-select-dropdown {
+  border-radius: 8px;
+}
+
+.database-object-select-popper .el-select-dropdown__wrap {
+  max-height: 280px;
+}
+
+.database-object-select-popper .el-select-dropdown__item {
+  height: auto;
+  min-height: 34px;
+  padding: 6px 10px;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.database-object-select-popper .el-select-dropdown__item.is-hovering {
+  background: var(--surface-strong);
+  color: var(--text);
+}
+
+.database-object-select-popper .el-select-dropdown__item.is-selected {
+  background: var(--orange-soft);
+  color: var(--orange);
+}
+
+.database-object-option {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.database-object-option strong,
+.database-object-option small {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.database-object-option strong {
+  font-weight: 650;
+}
+
+.database-object-option small {
+  color: var(--faint);
+  font-size: 11px;
 }
 
 .el-dialog.settings-dialog,

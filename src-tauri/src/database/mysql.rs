@@ -1,8 +1,18 @@
 use mysql::prelude::*;
-use mysql::{params, OptsBuilder, Pool, Row, Value};
+use mysql::{params, OptsBuilder, Pool, PooledConn, Row, Value};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value as JsonValue};
-use std::time::Instant;
+use std::{
+    collections::HashMap,
+    sync::{Arc, Mutex},
+    time::Instant,
+};
+use tauri::State;
+
+#[derive(Clone, Default)]
+pub struct MysqlState {
+    pools: Arc<Mutex<HashMap<String, Pool>>>,
+}
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -68,21 +78,56 @@ pub struct MysqlTableDetail {
     pub ddl: String,
 }
 
-fn pool(config: &MysqlConnectionConfig, database: Option<&str>) -> Result<Pool, String> {
+fn effective_database<'a>(config: &'a MysqlConnectionConfig, database: Option<&'a str>) -> Option<&'a str> {
+    database
+        .or(config.database.as_deref())
+        .filter(|value| !value.is_empty())
+}
+
+fn pool_key(config: &MysqlConnectionConfig, database: Option<&str>) -> String {
+    format!(
+        "{}:{}:{}:{}:{}",
+        config.host,
+        config.port,
+        config.username,
+        config.password,
+        effective_database(config, database).unwrap_or_default()
+    )
+}
+
+fn create_pool(config: &MysqlConnectionConfig, database: Option<&str>) -> Result<Pool, String> {
     let mut builder = OptsBuilder::new()
         .ip_or_hostname(Some(config.host.clone()))
         .tcp_port(config.port)
         .user(Some(config.username.clone()))
         .pass(Some(config.password.clone()));
 
-    if let Some(database) = database
-        .or(config.database.as_deref())
-        .filter(|value| !value.is_empty())
-    {
+    if let Some(database) = effective_database(config, database) {
         builder = builder.db_name(Some(database.to_string()));
     }
 
     Pool::new(builder).map_err(|error| error.to_string())
+}
+
+pub(crate) fn pool(state: &MysqlState, config: &MysqlConnectionConfig, database: Option<&str>) -> Result<Pool, String> {
+    let key = pool_key(config, database);
+    if let Some(pool) = state
+        .pools
+        .lock()
+        .map_err(|_| "MySQL connection pool state is unavailable".to_string())?
+        .get(&key)
+        .cloned()
+    {
+        return Ok(pool);
+    }
+
+    let pool = create_pool(config, database)?;
+    state
+        .pools
+        .lock()
+        .map_err(|_| "MySQL connection pool state is unavailable".to_string())?
+        .insert(key, pool.clone());
+    Ok(pool)
 }
 
 fn value_to_json(value: Value) -> JsonValue {
@@ -110,13 +155,10 @@ fn value_to_json(value: Value) -> JsonValue {
 }
 
 fn fetch_table_items(
-    config: &MysqlConnectionConfig,
+    conn: &mut PooledConn,
     database: &str,
     table_type: &str,
 ) -> Result<Vec<JsonValue>, String> {
-    let pool = pool(config, Some("information_schema"))?;
-    let mut conn = pool.get_conn().map_err(|error| error.to_string())?;
-
     conn.exec_map(
         "SELECT
              TABLE_NAME,
@@ -160,12 +202,9 @@ fn fetch_table_items(
 }
 
 fn fetch_routines(
-    config: &MysqlConnectionConfig,
+    conn: &mut PooledConn,
     database: &str,
 ) -> Result<Vec<JsonValue>, String> {
-    let pool = pool(config, Some("information_schema"))?;
-    let mut conn = pool.get_conn().map_err(|error| error.to_string())?;
-
     conn.exec_map(
         "SELECT ROUTINE_NAME
          FROM ROUTINES
@@ -180,8 +219,11 @@ fn fetch_routines(
 }
 
 #[tauri::command]
-pub fn mysql_test_connection(config: MysqlConnectionConfig) -> Result<String, String> {
-    let pool = pool(&config, None)?;
+pub fn mysql_test_connection(
+    state: State<'_, MysqlState>,
+    config: MysqlConnectionConfig,
+) -> Result<String, String> {
+    let pool = pool(&state, &config, None)?;
     let mut conn = pool.get_conn().map_err(|error| error.to_string())?;
     conn.query_drop("SELECT 1")
         .map_err(|error| error.to_string())?;
@@ -189,8 +231,11 @@ pub fn mysql_test_connection(config: MysqlConnectionConfig) -> Result<String, St
 }
 
 #[tauri::command]
-pub fn mysql_load_schema(config: MysqlConnectionConfig) -> Result<Vec<MysqlSchema>, String> {
-    let pool = pool(&config, Some("information_schema"))?;
+pub fn mysql_load_schema(
+    state: State<'_, MysqlState>,
+    config: MysqlConnectionConfig,
+) -> Result<Vec<MysqlSchema>, String> {
+    let pool = pool(&state, &config, Some("information_schema"))?;
     let mut conn = pool.get_conn().map_err(|error| error.to_string())?;
 
     let databases: Vec<String> = conn
@@ -205,9 +250,9 @@ pub fn mysql_load_schema(config: MysqlConnectionConfig) -> Result<Vec<MysqlSchem
     databases
         .into_iter()
         .map(|database| {
-            let tables = fetch_table_items(&config, &database, "BASE TABLE")?;
-            let views = fetch_table_items(&config, &database, "VIEW")?;
-            let routines = fetch_routines(&config, &database)?;
+            let tables = fetch_table_items(&mut conn, &database, "BASE TABLE")?;
+            let views = fetch_table_items(&mut conn, &database, "VIEW")?;
+            let routines = fetch_routines(&mut conn, &database)?;
 
             Ok(MysqlSchema {
                 name: database,
@@ -244,12 +289,13 @@ pub fn mysql_load_schema(config: MysqlConnectionConfig) -> Result<Vec<MysqlSchem
 
 #[tauri::command]
 pub fn mysql_execute_query(
+    state: State<'_, MysqlState>,
     config: MysqlConnectionConfig,
     database: Option<String>,
     sql: String,
 ) -> Result<MysqlQueryResult, String> {
     let start = Instant::now();
-    let pool = pool(&config, database.as_deref())?;
+    let pool = pool(&state, &config, database.as_deref())?;
     let mut conn = pool.get_conn().map_err(|error| error.to_string())?;
 
     let mut result = conn.query_iter(sql).map_err(|error| error.to_string())?;
@@ -297,11 +343,12 @@ pub fn mysql_execute_query(
 
 #[tauri::command]
 pub fn mysql_describe_table(
+    state: State<'_, MysqlState>,
     config: MysqlConnectionConfig,
     database: String,
     table: String,
 ) -> Result<MysqlTableDetail, String> {
-    let pool = pool(&config, Some(&database))?;
+    let pool = pool(&state, &config, Some(&database))?;
     let mut conn = pool.get_conn().map_err(|error| error.to_string())?;
 
     let columns = conn

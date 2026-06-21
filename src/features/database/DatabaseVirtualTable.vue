@@ -199,6 +199,7 @@ function spacerHeight(visibleRows, key) {
 
 .virtual-table {
   display: flex;
+  min-width: 0;
   min-height: 0;
   flex: 1;
   flex-direction: column;

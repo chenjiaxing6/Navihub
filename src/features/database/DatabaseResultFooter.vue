@@ -7,6 +7,7 @@ defineProps({
   result: { type: Object, default: null },
   searchedRowCount: { type: Number, default: 0 },
   canEdit: { type: Boolean, default: false },
+  canDelete: { type: Boolean, default: false },
   selectedRowCount: { type: Number, default: 0 },
   hasPendingChanges: { type: Boolean, default: false },
   loading: { type: Boolean, default: false },
@@ -28,26 +29,32 @@ const emit = defineEmits([
 <template>
   <footer class="table-footer">
     <div class="table-footer__tools" aria-label="数据工具">
-      <button type="button" class="table-footer__tool" title="新增记录" :disabled="!canEdit" @click="emit('add-row')">
-        <el-icon><Plus /></el-icon>
-      </button>
-      <button
-        type="button"
-        class="table-footer__tool"
-        title="删除记录"
-        :disabled="activeKind !== 'table' || selectedRowCount === 0"
-        @click="emit('delete-records')"
-      >
-        <el-icon><Minus /></el-icon>
-      </button>
-      <span class="table-footer__tool-separator" />
-      <button type="button" class="table-footer__tool" title="提交更改" :disabled="!hasPendingChanges || loading" @click="emit('commit-changes')">
-        <el-icon><Check /></el-icon>
-      </button>
-      <button type="button" class="table-footer__tool" title="取消更改" :disabled="!hasPendingChanges" @click="emit('cancel-changes')">
-        <el-icon><Close /></el-icon>
-      </button>
-      <span class="table-footer__tool-separator" />
+      <template v-if="activeKind === 'table'">
+        <button type="button" class="table-footer__tool" title="新增记录" :disabled="!canEdit" @click="emit('add-row')">
+          <el-icon><Plus /></el-icon>
+        </button>
+      </template>
+      <template v-if="activeKind === 'table' || activeKind === 'query'">
+        <button
+          type="button"
+          class="table-footer__tool"
+          title="删除记录"
+          :disabled="!canDelete || selectedRowCount === 0"
+          @click="emit('delete-records')"
+        >
+          <el-icon><Minus /></el-icon>
+        </button>
+      </template>
+      <template v-if="activeKind === 'table' || activeKind === 'query'">
+        <span class="table-footer__tool-separator" />
+        <button type="button" class="table-footer__tool" title="提交更改" :disabled="!hasPendingChanges || loading" @click="emit('commit-changes')">
+          <el-icon><Check /></el-icon>
+        </button>
+        <button type="button" class="table-footer__tool" title="取消更改" :disabled="!hasPendingChanges" @click="emit('cancel-changes')">
+          <el-icon><Close /></el-icon>
+        </button>
+        <span class="table-footer__tool-separator" />
+      </template>
       <button type="button" class="table-footer__tool" title="刷新" :disabled="loading" @click="emit('refresh')">
         <el-icon><Refresh /></el-icon>
       </button>

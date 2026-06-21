@@ -6,13 +6,14 @@ defineProps({
   schemaOptions: { type: Array, default: () => [] },
   runLabel: { type: String, required: true },
   ready: { type: Boolean, default: false },
+  fill: { type: Boolean, default: false },
 });
 
 const emit = defineEmits(["update:schemaName", "run", "save"]);
 </script>
 
 <template>
-  <div class="query-editor">
+  <div class="query-editor" :class="{ 'is-fill': fill }">
     <div class="query-editor__bar">
       <el-select
         :model-value="schemaName"
@@ -69,8 +70,10 @@ const emit = defineEmits(["update:schemaName", "run", "save"]);
   background: var(--panel);
 }
 
-:global(.query-tab-empty) .query-editor {
-  flex: 1 1 auto;
+.query-editor.is-fill {
+  flex: 1 1 0;
+  height: 100%;
+  min-height: 0;
   border-bottom: 0;
 }
 
@@ -148,8 +151,10 @@ const emit = defineEmits(["update:schemaName", "run", "save"]);
 }
 
 .query-editor__host {
+  display: flex;
   min-height: 0;
   flex: 1;
+  flex-direction: column;
   width: 100%;
   overflow: hidden;
   background: #fff;
@@ -160,6 +165,8 @@ const emit = defineEmits(["update:schemaName", "run", "save"]);
 }
 
 .query-editor__host :slotted(.query-editor-root) {
+  min-height: 0;
+  flex: 1;
   height: 100%;
 }
 

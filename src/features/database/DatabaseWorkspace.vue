@@ -3,6 +3,7 @@ import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, shallowR
 import { ElMessage } from "element-plus/es/components/message/index";
 import { ElMessageBox } from "element-plus/es/components/message-box/index";
 import ContextMenu from "../../shared/ContextMenu.vue";
+import DatabaseDdlPanel from "./DatabaseDdlPanel.vue";
 import DatabaseEmptyState from "./DatabaseEmptyState.vue";
 import DatabaseQueryEditor from "./DatabaseQueryEditor.vue";
 import DatabaseResultFooter from "./DatabaseResultFooter.vue";
@@ -106,6 +107,10 @@ const tableSearchOpen = ref(false);
 const tableSearchQuery = ref("");
 const querySelection = ref({ start: 0, end: 0 });
 const tableDesignStates = ref({});
+const ddlPanelOpen = ref(false);
+const activeTableDdl = ref("");
+const activeTableDdlError = ref("");
+const activeTableDdlLoading = ref(false);
 let tableResizeObserver = null;
 let queryEditorModules = null;
 let queryEditorModulesPromise = null;
@@ -178,6 +183,21 @@ watch(
     loadQueryColumnCompletions(schema);
     queryEditorView.value?.dispatch({ effects: [] });
   },
+);
+
+watch(
+  () => props.activeTopTab?.id,
+  () => {
+    activeTableDdl.value = "";
+    activeTableDdlError.value = "";
+    if (!shouldShowDdlPanel.value) {
+      ddlPanelOpen.value = false;
+    }
+    if (shouldShowDdlPanel.value && ddlPanelOpen.value) {
+      loadActiveTableDdl();
+    }
+  },
+  { flush: "post" },
 );
 
 watch(
@@ -258,8 +278,34 @@ const hasPendingTableChanges = computed(() => {
   const state = activeEditState.value;
   return Boolean(state && (state.newRows.length > 0 || state.updatedRows.size > 0));
 });
-const canEditActiveResult = computed(() => props.activeTopTab?.kind === "table" && Boolean(activeResult.value?.table));
+const canEditActiveResult = computed(() => {
+  if (props.activeTopTab?.kind === "table") {
+    return Boolean(activeResult.value?.table);
+  }
+
+  if (props.activeTopTab?.kind === "query") {
+    return Boolean(activeResult.value?.deleteTarget?.schema && activeResult.value?.deleteTarget?.table);
+  }
+
+  return false;
+});
 const canStopActiveOperation = computed(() => loading.value);
+const canDeleteActiveResult = computed(() => {
+  if (props.activeTopTab?.kind === "table") {
+    return Boolean(activeResult.value?.table);
+  }
+
+  if (props.activeTopTab?.kind === "query") {
+    return Boolean(activeResult.value?.deleteTarget?.schema && activeResult.value?.deleteTarget?.table);
+  }
+
+  return false;
+});
+const shouldShowDdlPanel = computed(() => props.activeTopTab?.kind === "table" && Boolean(activeResult.value?.schema && activeResult.value?.table));
+const activeDdlTitle = computed(() => {
+  const result = activeResult.value;
+  return result?.schema && result?.table ? `${result.schema}.${result.table}` : "DDL";
+});
 
 const tableColumns = computed(() => {
   const tabId = props.activeTopTab?.id;
@@ -393,7 +439,6 @@ const activeDesignSqlPreview = computed(() => {
 const copyContextItems = computed(() => {
   const hasSelection = Boolean(selectedCopyText());
   const isResult = ["table", "query"].includes(props.activeTopTab?.kind);
-  const isTable = props.activeTopTab?.kind === "table";
 
   if (!isResult) {
     if (props.activeTopTab?.kind === "schema") {
@@ -414,7 +459,7 @@ const copyContextItems = computed(() => {
   }
 
   return [
-    { key: "delete-records", label: "删除记录", danger: true, disabled: !isTable || selectedResultRows().length === 0 },
+    { key: "delete-records", label: "删除记录", danger: true, disabled: !canDeleteActiveResult.value || selectedResultRows().length === 0 },
     { key: "copy", label: "复制", divided: true, disabled: !hasSelection },
     { key: "copy-fields", label: "复制字段名称", disabled: selectedResultColumns().length === 0 },
     {
@@ -422,8 +467,8 @@ const copyContextItems = computed(() => {
       label: "复制为",
       disabled: !hasSelection,
       children: [
-        { key: "copy-insert", label: "Insert 语句", disabled: !isTable || selectedResultRows().length === 0 },
-        { key: "copy-update", label: "Update 语句", disabled: !isTable || selectedResultRows().length === 0 },
+        { key: "copy-insert", label: "Insert 语句", disabled: !canDeleteActiveResult.value || selectedResultRows().length === 0 },
+        { key: "copy-update", label: "Update 语句", disabled: !canDeleteActiveResult.value || selectedResultRows().length === 0 },
         { key: "copy-tsv-data", label: "制表符分隔值（数据）", divided: true, disabled: !hasSelection },
         { key: "copy-tsv-fields", label: "制表符分隔值（字段名称）", disabled: selectedResultColumns().length === 0 },
         { key: "copy-tsv-fields-data", label: "制表符分隔值（字段名和数据）", disabled: !hasSelection },
@@ -1255,6 +1300,26 @@ function selectedResultRows() {
   return [];
 }
 
+function selectedResultInsertIndex() {
+  const resultRows = activeResult.value?.rows ?? [];
+  const searchedRows = searchedResultRows.value;
+  const { startRow, endRow } = selectedResultCellRange.value;
+  const { start, end } = selectedResultRowRange.value;
+  const selectedEnd = startRow !== null && endRow !== null
+    ? Math.max(startRow, endRow)
+    : start !== null && end !== null
+      ? Math.max(start, end)
+      : null;
+
+  if (selectedEnd === null) {
+    return 0;
+  }
+
+  const selectedRow = searchedRows[selectedEnd];
+  const rowIndex = resultRows.findIndex((row) => rowInternalId(row) === rowInternalId(selectedRow));
+  return rowIndex >= 0 ? rowIndex + 1 : 0;
+}
+
 function rowInternalId(row) {
   return row?.__myhubRowId ?? "";
 }
@@ -1420,10 +1485,11 @@ function mysqlValueLiteral(value) {
 
 function activeTableNameSql() {
   const result = activeResult.value;
-  if (!result?.schema || !result?.table) {
+  const target = activeDeleteTarget();
+  if (!target?.schema || !target?.table) {
     return "";
   }
-  return `${quoteIdentifier(result.schema)}.${quoteIdentifier(result.table)}`;
+  return `${quoteIdentifier(target.schema)}.${quoteIdentifier(target.table)}`;
 }
 
 function tableDetailCacheKey(schema, table) {
@@ -1431,22 +1497,78 @@ function tableDetailCacheKey(schema, table) {
 }
 
 async function loadActiveTableDetail() {
-  const result = activeResult.value;
-  if (!result?.schema || !result?.table) {
+  const target = activeDeleteTarget();
+  if (!target?.schema || !target?.table) {
     return null;
   }
 
-  const cacheKey = tableDetailCacheKey(result.schema, result.table);
+  const cacheKey = tableDetailCacheKey(target.schema, target.table);
   if (tableDetailCache.value[cacheKey]) {
     return tableDetailCache.value[cacheKey];
   }
 
-  const detail = await describeMysqlTable(currentConfig(), result.schema, result.table);
+  const detail = await describeMysqlTable(currentConfig(), target.schema, target.table);
   tableDetailCache.value = {
     ...tableDetailCache.value,
     [cacheKey]: detail,
   };
   return detail;
+}
+
+async function loadActiveTableDdl({ force = false } = {}) {
+  if (!shouldShowDdlPanel.value) {
+    return;
+  }
+
+  if (activeTableDdl.value && !force) {
+    return;
+  }
+
+  activeTableDdlLoading.value = true;
+  activeTableDdlError.value = "";
+  try {
+    const detail = await loadActiveTableDetail();
+    activeTableDdl.value = detail?.ddl ?? "";
+  } catch (error) {
+    activeTableDdlError.value = `加载 DDL 失败：${error}`;
+  } finally {
+    activeTableDdlLoading.value = false;
+  }
+}
+
+function toggleDdlPanel() {
+  ddlPanelOpen.value = !ddlPanelOpen.value;
+  if (ddlPanelOpen.value) {
+    loadActiveTableDdl();
+  }
+}
+
+async function refreshActiveTableDdl() {
+  const target = activeDeleteTarget();
+  if (target?.schema && target?.table) {
+    const nextCache = { ...tableDetailCache.value };
+    delete nextCache[tableDetailCacheKey(target.schema, target.table)];
+    tableDetailCache.value = nextCache;
+  }
+  activeTableDdl.value = "";
+  await loadActiveTableDdl({ force: true });
+}
+
+async function copyActiveTableDdl() {
+  copyText(activeTableDdl.value, "已复制 DDL");
+}
+
+function activeDeleteTarget() {
+  const result = activeResult.value;
+  if (!result) {
+    return null;
+  }
+
+  if (result.table) {
+    return { schema: result.schema, table: result.table };
+  }
+
+  return result.deleteTarget ?? null;
 }
 
 function primaryKeyColumns(detail) {
@@ -1461,6 +1583,38 @@ function rowWhereClause(row, columns) {
   return columns
     .map((column) => `${quoteIdentifier(column)} <=> ${mysqlValueLiteral(row[column])}`)
     .join(" AND ");
+}
+
+function normalizeSqlIdentifier(identifier) {
+  return String(identifier ?? "")
+    .trim()
+    .replace(/^`|`$/g, "")
+    .replace(/``/g, "`");
+}
+
+function inferSingleTableDeleteTarget(sql, fallbackSchema) {
+  const normalizedSql = String(sql ?? "").replace(/--.*$/gm, " ").replace(/\/\*[\s\S]*?\*\//g, " ");
+  const fromMatch = normalizedSql.match(/\bfrom\s+((?:`[^`]+`|\w+)(?:\s*\.\s*(?:`[^`]+`|\w+))?)(?:\s+(?:as\s+)?(?:`[^`]+`|\w+))?/i);
+  if (!fromMatch) {
+    return null;
+  }
+
+  const tableRefOffset = fromMatch[0].indexOf(fromMatch[1]);
+  const rest = normalizedSql.slice((fromMatch.index ?? 0) + tableRefOffset + fromMatch[1].length);
+  if (/\b(join|union)\b/i.test(rest)) {
+    return null;
+  }
+
+  const parts = fromMatch[1].split(".").map(normalizeSqlIdentifier).filter(Boolean);
+  if (parts.length === 1) {
+    return { schema: fallbackSchema, table: parts[0] };
+  }
+
+  if (parts.length === 2) {
+    return { schema: parts[0], table: parts[1] };
+  }
+
+  return null;
 }
 
 async function copyGeneratedSql(kind) {
@@ -1561,6 +1715,11 @@ async function deleteSelectedRecords() {
       ElMessage.warning("当前表没有主键，无法安全删除记录");
       return;
     }
+    const missingKeyColumn = keyColumns.find((column) => !tableColumns.value.some((item) => item.key === column));
+    if (missingKeyColumn) {
+      ElMessage.warning(`结果中缺少主键字段 ${missingKeyColumn}，无法安全删除记录`);
+      return;
+    }
 
     await ElMessageBox.confirm(`确定删除选中的 ${rows.length} 条记录吗？`, "删除记录", {
       confirmButtonText: "删除",
@@ -1582,10 +1741,14 @@ async function deleteSelectedRecords() {
       return;
     }
     ElMessage.success("记录已删除");
-    await loadTableData(activeResult.value.schema, activeResult.value.table, props.activeTopTab.id, {
-      page: activeResult.value.page,
-      pageSize: activeResult.value.pageSize,
-    });
+    if (props.activeTopTab?.kind === "table") {
+      await loadTableData(activeResult.value.schema, activeResult.value.table, props.activeTopTab.id, {
+        page: activeResult.value.page,
+        pageSize: activeResult.value.pageSize,
+      });
+    } else if (props.activeTopTab?.kind === "query") {
+      await executeActiveQuery();
+    }
   } catch (error) {
     if (error !== "cancel" && error !== "close") {
       ElMessage.error(`删除失败：${error}`);
@@ -1608,7 +1771,7 @@ function refreshActiveResult() {
 }
 
 function addResultRow() {
-  if (!canEditActiveResult.value) {
+  if (props.activeTopTab?.kind !== "table" || !canEditActiveResult.value) {
     return;
   }
 
@@ -1620,9 +1783,13 @@ function addResultRow() {
   const row = Object.fromEntries(tableColumns.value.map((column) => [column.key, null]));
   row.__myhubRowId = `new-${newRowSequence += 1}`;
   state.newRows.push(row.__myhubRowId);
-  updateActiveRows([row, ...(activeResult.value?.rows ?? [])]);
+  const nextRows = [...(activeResult.value?.rows ?? [])];
+  const insertIndex = selectedResultInsertIndex();
+  nextRows.splice(insertIndex, 0, row);
+  tableSearchQuery.value = "";
+  updateActiveRows(nextRows);
   clearResultRowSelection();
-  selectResultCellRange(0, 0);
+  selectResultCellRange(insertIndex, 0);
 }
 
 function cancelTableChanges() {
@@ -1659,6 +1826,15 @@ async function commitTableChanges() {
       ElMessage.warning("当前表没有主键，无法安全提交更新");
       return;
     }
+    const missingKeyColumn = keyColumns.find((column) => !tableColumns.value.some((item) => item.key === column));
+    if (missingKeyColumn) {
+      ElMessage.warning(`结果中缺少主键字段 ${missingKeyColumn}，无法安全提交更新`);
+      return;
+    }
+    if (props.activeTopTab?.kind === "query" && state.newRows.length > 0) {
+      ElMessage.warning("查询结果暂不支持新增记录");
+      return;
+    }
 
     const operationToken = tableOperationToken += 1;
     loading.value = true;
@@ -1689,7 +1865,7 @@ async function commitTableChanges() {
       }
       const changedColumns = tableColumns.value
         .map((column) => column.key)
-        .filter((column) => original[column] !== row[column]);
+        .filter((column) => !keyColumns.includes(column) && original[column] !== row[column]);
       if (changedColumns.length === 0) {
         continue;
       }
@@ -1703,10 +1879,14 @@ async function commitTableChanges() {
 
     ElMessage.success("更改已提交");
     clearEditState();
-    await loadTableData(result.schema, result.table, props.activeTopTab.id, {
-      page: result.page,
-      pageSize: result.pageSize,
-    });
+    if (props.activeTopTab?.kind === "table") {
+      await loadTableData(result.schema, result.table, props.activeTopTab.id, {
+        page: result.page,
+        pageSize: result.pageSize,
+      });
+    } else if (props.activeTopTab?.kind === "query") {
+      await executeActiveQuery();
+    }
   } catch (error) {
     ElMessage.error(`提交失败：${error}`);
   } finally {
@@ -1759,6 +1939,19 @@ function commitCellEdit() {
 
 function cancelCellEdit() {
   editingCell.value = null;
+}
+
+function handleWindowMouseDown(event) {
+  if (!editingCell.value) {
+    return;
+  }
+
+  const target = event.target;
+  if (target instanceof HTMLElement && target.closest(".virtual-table__cell-input")) {
+    return;
+  }
+
+  commitCellEdit();
 }
 
 function isEditingResultCell(row, column) {
@@ -2052,6 +2245,7 @@ onMounted(() => {
   window.addEventListener("mousemove", resizeColumn);
   window.addEventListener("mouseup", stopColumnResize);
   window.addEventListener("keydown", handleKeydown);
+  window.addEventListener("mousedown", handleWindowMouseDown, true);
 });
 
 onBeforeUnmount(() => {
@@ -2065,6 +2259,7 @@ onBeforeUnmount(() => {
   window.removeEventListener("mousemove", resizeColumn);
   window.removeEventListener("mouseup", stopColumnResize);
   window.removeEventListener("keydown", handleKeydown);
+  window.removeEventListener("mousedown", handleWindowMouseDown, true);
   document.body.classList.remove("is-resizing-table-column");
 });
 
@@ -2149,6 +2344,7 @@ async function executeActiveQuery() {
         rows: editableRows(result.rows ?? []),
         schema: tab.schema,
         table: null,
+        deleteTarget: inferSingleTableDeleteTarget(sql, tab.schema),
         page: 1,
         pageSize: result.rows?.length ?? 0,
         totalRows: result.rows?.length ?? 0,
@@ -2370,6 +2566,7 @@ function handlePageChange(page) {
           :schema-options="querySchemaOptions"
           :run-label="queryRunLabel"
           :ready="queryEditorReady"
+          :fill="!shouldShowResultPanel"
           @run="executeActiveQuery"
           @save="saveActiveQuery"
         >
@@ -2385,44 +2582,57 @@ function handlePageChange(page) {
           @keydown="handleSearchKeydown"
           @close="closeTableSearch"
         />
-        <DatabaseVirtualTable
-          v-if="shouldShowResultPanel"
-          ref="tableViewport"
-          row-key-prefix="result"
-          :columns="tableColumns"
-          :rows="searchedResultRows"
-          :visible-rows="visibleTableRows"
-          :grid-template="tableGridTemplate"
-          :content-width="tableContentWidth"
-          :scroll-left="tableScrollLeft"
-          :has-search="hasTableSearch"
-          :normalized-search="normalizedTableSearch"
-          :editing-cell="editingCell"
-          :cell-value="tableCellValue"
-          :is-row-selected="isResultRowSelected"
-          :is-cell-selected="isResultCellSelected"
-          :is-changed-cell="isChangedResultCell"
-          :is-new-row="isNewResultRow"
-          :is-editing-cell="isEditingResultCell"
-          :absolute-row-index="absoluteResultRowIndex"
-          @scroll="handleTableScroll"
-          @resize-column="startColumnResize"
-          @row-selection-start="startResultRowSelection"
-          @row-selection-extend="extendResultRowSelection"
-          @cell-selection-start="startResultCellSelection"
-          @cell-selection-extend="extendResultCellSelection"
-          @context-menu="openCopyContextMenu"
-          @edit-cell="startCellEdit"
-          @commit-edit="commitCellEdit"
-          @cancel-edit="cancelCellEdit"
-          @update-edit-value="editingCell.value = $event"
-        />
+        <div v-if="shouldShowResultPanel" class="result-area">
+          <DatabaseVirtualTable
+            ref="tableViewport"
+            row-key-prefix="result"
+            :columns="tableColumns"
+            :rows="searchedResultRows"
+            :visible-rows="visibleTableRows"
+            :grid-template="tableGridTemplate"
+            :content-width="tableContentWidth"
+            :scroll-left="tableScrollLeft"
+            :has-search="hasTableSearch"
+            :normalized-search="normalizedTableSearch"
+            :editing-cell="editingCell"
+            :cell-value="tableCellValue"
+            :is-row-selected="isResultRowSelected"
+            :is-cell-selected="isResultCellSelected"
+            :is-changed-cell="isChangedResultCell"
+            :is-new-row="isNewResultRow"
+            :is-editing-cell="isEditingResultCell"
+            :absolute-row-index="absoluteResultRowIndex"
+            @scroll="handleTableScroll"
+            @resize-column="startColumnResize"
+            @row-selection-start="startResultRowSelection"
+            @row-selection-extend="extendResultRowSelection"
+            @cell-selection-start="startResultCellSelection"
+            @cell-selection-extend="extendResultCellSelection"
+            @context-menu="openCopyContextMenu"
+            @edit-cell="startCellEdit"
+            @commit-edit="commitCellEdit"
+            @cancel-edit="cancelCellEdit"
+            @update-edit-value="editingCell.value = $event"
+          />
+          <DatabaseDdlPanel
+            v-if="shouldShowDdlPanel"
+            :open="ddlPanelOpen"
+            :title="activeDdlTitle"
+            :ddl="activeTableDdl"
+            :loading="activeTableDdlLoading"
+            :error="activeTableDdlError"
+            @toggle="toggleDdlPanel"
+            @refresh="refreshActiveTableDdl"
+            @copy="copyActiveTableDdl"
+          />
+        </div>
         <DatabaseResultFooter
           v-if="shouldShowResultPanel"
           :active-kind="activeTopTab.kind"
           :result="activeResult"
           :searched-row-count="searchedResultRows.length"
           :can-edit="canEditActiveResult"
+          :can-delete="canDeleteActiveResult"
           :selected-row-count="selectedResultRows().length"
           :has-pending-changes="hasPendingTableChanges"
           :loading="loading"
@@ -2480,5 +2690,18 @@ function handlePageChange(page) {
   border-radius: 10px;
   background: #fff;
   box-shadow: none;
+}
+
+.query-editor-root {
+  min-height: 0;
+  flex: 1;
+  height: 100%;
+}
+
+.result-area {
+  display: flex;
+  min-height: 0;
+  flex: 1;
+  overflow: hidden;
 }
 </style>

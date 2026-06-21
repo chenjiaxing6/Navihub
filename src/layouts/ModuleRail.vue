@@ -11,7 +11,9 @@ const emit = defineEmits(["open-settings", "set-workspace"]);
 
 <template>
   <nav class="module-rail" aria-label="主导航">
-    <div class="brand">MH</div>
+    <div class="brand" title="NaviHub">
+      <img src="../../src-tauri/icons/icon.png" alt="NaviHub" />
+    </div>
     <button
       v-for="workspace in workspaces"
       :key="workspace.id"
@@ -44,15 +46,19 @@ const emit = defineEmits(["open-settings", "set-workspace"]);
 .brand {
   display: grid;
   place-items: center;
-  width: 36px;
-  height: 34px;
+  width: 38px;
+  height: 38px;
   margin: 0 0 8px;
-  border-radius: 10px;
-  background: var(--orange);
-  color: #fff;
-  font-size: 10px;
-  font-weight: 850;
+  border-radius: 12px;
+  background: transparent;
   box-shadow: none;
+}
+
+.brand img {
+  display: block;
+  width: 34px;
+  height: 34px;
+  object-fit: contain;
 }
 
 .rail-button,

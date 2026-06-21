@@ -50,14 +50,15 @@ const emit = defineEmits(["open-settings", "set-workspace"]);
   height: 38px;
   margin: 0 0 8px;
   border-radius: 12px;
-  background: transparent;
-  box-shadow: none;
+  border: 1px solid var(--line);
+  background: #fff;
+  box-shadow: var(--shadow-card);
 }
 
 .brand img {
   display: block;
-  width: 34px;
-  height: 34px;
+  width: 30px;
+  height: 30px;
   object-fit: contain;
 }
 

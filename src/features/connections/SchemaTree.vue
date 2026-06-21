@@ -512,16 +512,14 @@ summary em {
 }
 
 .tree-item.multi-selected {
-  background: var(--blue-soft);
-  color: var(--blue-strong);
+  background: var(--orange-soft);
+  color: #a8421f;
 }
 
 .tree-item.multi-selected.selected {
-  background:
-    linear-gradient(90deg, rgba(242, 107, 58, 0.16), rgba(37, 99, 235, 0.10)),
-    var(--blue-soft);
-  color: var(--blue-strong);
-  box-shadow: inset 2px 0 0 var(--orange);
+  background: var(--orange-soft);
+  color: #a8421f;
+  box-shadow: none;
 }
 
 .schema-icon,

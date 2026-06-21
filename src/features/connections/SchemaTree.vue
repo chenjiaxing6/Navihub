@@ -365,6 +365,8 @@ function includesQuery(value, query) {
         { key: 'copy-table-structure', label: '复制表结构', hidden: contextObject?.groupType !== 'table' },
         { key: 'copy-table-data', label: '复制结构和数据', hidden: contextObject?.groupType !== 'table' },
         { key: 'rename-table', label: '重命名表', hidden: contextObject?.groupType !== 'table' },
+        { key: 'empty-table', label: '清空表', danger: true, divided: true, hidden: contextObject?.groupType !== 'table' },
+        { key: 'truncate-table', label: '截断表', danger: true, hidden: contextObject?.groupType !== 'table' },
         { key: 'drop-table', label: '删除表', danger: true, divided: true, hidden: contextObject?.groupType !== 'table' },
       ]"
       :x="objectContextPosition.x"

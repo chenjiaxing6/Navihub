@@ -214,6 +214,7 @@ function stopSidebarResize() {
           :pending-table-query="props.pendingTableQuery"
           :terminal-theme="props.terminalTheme"
           @connection-state="emit('update-ssh-state', $event)"
+          @database-object-action="emit('database-object-action', $event)"
           @open-table-query="emit('open-table-query', $event)"
           @refresh-connection="emit('refresh-connection', $event)"
           @save-query="emit('save-query', $event)"

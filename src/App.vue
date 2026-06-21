@@ -841,8 +841,9 @@ function closeDroppedObjectTabs(connectionId, result) {
     return;
   }
 
+  const droppedTables = new Set(result.tables ?? [result.table].filter(Boolean));
   closeTabsByIds(dynamicTabs.value
-    .filter((tab) => tab.connectionId === connectionId && ["table", "table-design"].includes(tab.kind) && tab.schema === result.database && tab.table === result.table)
+    .filter((tab) => tab.connectionId === connectionId && ["table", "table-design"].includes(tab.kind) && tab.schema === result.database && droppedTables.has(tab.table))
     .map((tab) => tab.id));
 }
 

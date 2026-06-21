@@ -212,3 +212,29 @@ pub fn mysql_drop_table(
     conn.query_drop(format!("DROP TABLE {}", qualified_name(&database, &table)?))
         .map_err(|error| error.to_string())
 }
+
+#[tauri::command]
+pub fn mysql_empty_table(
+    state: State<'_, MysqlState>,
+    config: MysqlConnectionConfig,
+    database: String,
+    table: String,
+) -> Result<(), String> {
+    let pool = pool(&state, &config, Some(&database))?;
+    let mut conn = pool.get_conn().map_err(|error| error.to_string())?;
+    conn.query_drop(format!("DELETE FROM {}", qualified_name(&database, &table)?))
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub fn mysql_truncate_table(
+    state: State<'_, MysqlState>,
+    config: MysqlConnectionConfig,
+    database: String,
+    table: String,
+) -> Result<(), String> {
+    let pool = pool(&state, &config, Some(&database))?;
+    let mut conn = pool.get_conn().map_err(|error| error.to_string())?;
+    conn.query_drop(format!("TRUNCATE TABLE {}", qualified_name(&database, &table)?))
+        .map_err(|error| error.to_string())
+}

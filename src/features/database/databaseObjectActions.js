@@ -4,7 +4,9 @@ import {
   copyMysqlTable,
   dropMysqlDatabase,
   dropMysqlTable,
+  emptyMysqlTable,
   renameMysqlTable,
+  truncateMysqlTable,
 } from "./mysqlAdminApi";
 
 const promptOptions = {
@@ -21,6 +23,19 @@ const confirmOptions = {
   type: "warning",
   customClass: "bruno-message-box",
   dangerouslyUseHTMLString: false,
+};
+
+const tableDataActionMeta = {
+  "empty-table": {
+    verb: "清空",
+    message: "表数据已清空",
+    run: emptyMysqlTable,
+  },
+  "truncate-table": {
+    verb: "截断",
+    message: "表已截断",
+    run: truncateMysqlTable,
+  },
 };
 
 function trimName(value) {
@@ -73,6 +88,26 @@ export async function runDatabaseObjectAction(payload) {
     });
     ElMessage.success(payload.action === "copy-table-data" ? "表结构和数据已复制" : "表结构已复制");
     return { changed: true, type: "copy-table", database: schemaName, table: tableName, newTable };
+  }
+
+  if (tableDataActionMeta[payload.action] && schemaName && (tableName || tableNames.length > 0)) {
+    const meta = tableDataActionMeta[payload.action];
+    const targetTables = tableNames.length > 0 ? tableNames : [tableName];
+    const confirmMessage = targetTables.length > 1
+      ? `确认${meta.verb}选中的 ${targetTables.length} 张表？此操作会删除表内所有数据。`
+      : `确认${meta.verb}表“${schemaName}.${targetTables[0]}”？此操作会删除表内所有数据。`;
+    await ElMessageBox.confirm(confirmMessage, `${meta.verb}表`, confirmOptions);
+    for (const table of targetTables) {
+      await meta.run(config, schemaName, table);
+    }
+    ElMessage.success(meta.message);
+    return {
+      changed: true,
+      type: payload.action,
+      database: schemaName,
+      table: targetTables.length === 1 ? targetTables[0] : undefined,
+      tables: targetTables.length > 1 ? targetTables : undefined,
+    };
   }
 
   if (payload.action === "drop-table" && schemaName && tableNames.length > 1) {

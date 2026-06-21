@@ -38,3 +38,11 @@ export function renameMysqlTable(config, database, table, newTable) {
 export function dropMysqlTable(config, database, table) {
   return invoke("mysql_drop_table", { config, database, table });
 }
+
+export function emptyMysqlTable(config, database, table) {
+  return invoke("mysql_empty_table", { config, database, table });
+}
+
+export function truncateMysqlTable(config, database, table) {
+  return invoke("mysql_truncate_table", { config, database, table });
+}

@@ -22,6 +22,8 @@ pub fn run() {
             database::mysql_admin::mysql_copy_table,
             database::mysql_admin::mysql_rename_table,
             database::mysql_admin::mysql_drop_table,
+            database::mysql_admin::mysql_empty_table,
+            database::mysql_admin::mysql_truncate_table,
             monitor::system::monitor_snapshot,
             monitor::system::monitor_kill_process,
             monitor::system::monitor_stop_container,

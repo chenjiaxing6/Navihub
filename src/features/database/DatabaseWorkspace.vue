@@ -49,7 +49,7 @@ const props = defineProps({
   pendingTableQuery: { type: Object, default: null },
 });
 
-const emit = defineEmits(["schema-loaded", "table-design-saved", "update-connection", "open-table-query", "refresh-connection", "save-query", "update-query-schema"]);
+const emit = defineEmits(["schema-loaded", "table-design-saved", "update-connection", "open-table-query", "refresh-connection", "save-query", "update-query-schema", "database-object-action"]);
 const normalizedConnection = computed(() => ensureMysqlConnection(props.connection));
 const databaseTarget = computed(() => {
   const config = normalizedConnection.value.config;
@@ -380,6 +380,20 @@ const copyContextItems = computed(() => {
   const isTable = props.activeTopTab?.kind === "table";
 
   if (!isResult) {
+    if (props.activeTopTab?.kind === "schema") {
+      return [
+        { key: "design-table", label: "设计表", disabled: selectedSchemaTables().length !== 1 },
+        { key: "create-table", label: "新建表" },
+        { key: "copy-table-structure", label: "复制表结构", disabled: selectedSchemaTables().length !== 1 },
+        { key: "copy-table-data", label: "复制结构和数据", disabled: selectedSchemaTables().length !== 1 },
+        { key: "rename-table", label: "重命名表", disabled: selectedSchemaTables().length !== 1 },
+        { key: "empty-table", label: "清空表", danger: true, divided: true, disabled: selectedSchemaTables().length === 0 },
+        { key: "truncate-table", label: "截断表", danger: true, disabled: selectedSchemaTables().length === 0 },
+        { key: "drop-table", label: "删除表", danger: true, divided: true, disabled: selectedSchemaTables().length === 0 },
+        { key: "copy", label: "复制", divided: true, disabled: !hasSelection },
+      ];
+    }
+
     return [{ key: "copy", label: "复制", disabled: !hasSelection }];
   }
 
@@ -938,7 +952,31 @@ function stopSchemaCellSelection() {
 }
 
 function openCopyContextMenu(event, rowIndex = null, columnIndex = null) {
-  if (props.activeTopTab?.kind !== "schema" && rowIndex !== null) {
+  if (props.activeTopTab?.kind === "schema" && rowIndex !== null) {
+    const hasCellSelection = selectedSchemaCellRange.value.startRow !== null;
+    const hasRowSelection = selectedSchemaRowRange.value.start !== null;
+    const isInsideSelection = columnIndex === null
+      ? isSchemaRowSelected(rowIndex)
+      : isSchemaCellSelected(rowIndex, columnIndex);
+
+    if (!hasCellSelection && !hasRowSelection) {
+      if (columnIndex === null) {
+        clearSchemaCellSelection();
+        selectSchemaRowRange(rowIndex);
+      } else {
+        clearSchemaRowSelection();
+        selectSchemaCellRange(rowIndex, columnIndex);
+      }
+    } else if (!isInsideSelection) {
+      if (columnIndex === null) {
+        clearSchemaCellSelection();
+        selectSchemaRowRange(rowIndex);
+      } else {
+        clearSchemaRowSelection();
+        selectSchemaCellRange(rowIndex, columnIndex);
+      }
+    }
+  } else if (props.activeTopTab?.kind !== "schema" && rowIndex !== null) {
     const hasCellSelection = selectedResultCellRange.value.startRow !== null;
     const hasRowSelection = selectedResultRowRange.value.start !== null;
     const isInsideSelection = columnIndex === null
@@ -991,6 +1029,8 @@ function handleCopyContextSelect(item) {
     pasteIntoSelectedCells();
   } else if (item.key === "delete-records") {
     deleteSelectedRecords();
+  } else if (["design-table", "create-table", "copy-table-structure", "copy-table-data", "rename-table", "empty-table", "truncate-table", "drop-table"].includes(item.key)) {
+    runSelectedSchemaTableAction(item.key);
   }
 }
 
@@ -1046,6 +1086,45 @@ function selectedSchemaCopyText() {
   }
 
   return "";
+}
+
+function selectedSchemaTables() {
+  const rows = searchedSchemaTables.value;
+  const { start, end } = selectedSchemaRowRange.value;
+  if (start !== null && end !== null) {
+    const rowRange = clampRangeIndexes(start, end, rows.length);
+    return rows.slice(rowRange.from, rowRange.to + 1);
+  }
+
+  const { startRow, endRow } = selectedSchemaCellRange.value;
+  if (startRow !== null && endRow !== null) {
+    const rowRange = clampRangeIndexes(startRow, endRow, rows.length);
+    return rows.slice(rowRange.from, rowRange.to + 1);
+  }
+
+  return [];
+}
+
+function runSelectedSchemaTableAction(action) {
+  const tab = props.activeTopTab;
+  if (!tab || tab.kind !== "schema") {
+    return;
+  }
+
+  const tables = selectedSchemaTables();
+  const firstTable = tables[0]?.name;
+  if (action !== "create-table" && !firstTable) {
+    return;
+  }
+
+  emit("database-object-action", {
+    connection: normalizedConnection.value,
+    action,
+    schema: tab.schema,
+    groupType: "table",
+    table: firstTable,
+    tables: tables.map((table) => table.name),
+  });
 }
 
 function selectedResultCopyText() {
@@ -2285,6 +2364,7 @@ function handlePageChange(page) {
                   @mousedown.prevent="startSchemaRowSelection($event, rowIndex)"
                   @mouseenter="extendSchemaRowSelection(rowIndex)"
                   @dblclick="openSchemaTable(row)"
+                  @contextmenu.prevent.stop="openCopyContextMenu($event, rowIndex)"
                 />
               </div>
               <div class="virtual-table__rows">
@@ -2295,6 +2375,7 @@ function handlePageChange(page) {
                   :class="{ selected: isSchemaRowSelected(rowIndex) }"
                   :style="{ gridTemplateColumns: schemaTableGridTemplate }"
                   @dblclick="openSchemaTable(row)"
+                  @contextmenu.prevent.stop="openCopyContextMenu($event, rowIndex)"
                 >
                   <div
                     v-for="(column, columnIndex) in schemaTableColumns"
@@ -2308,6 +2389,7 @@ function handlePageChange(page) {
                     :title="schemaTableCellValue(row, column)"
                     @mousedown.prevent="startSchemaCellSelection($event, rowIndex, columnIndex)"
                     @mouseenter="extendSchemaCellSelection(rowIndex, columnIndex)"
+                    @contextmenu.prevent.stop="openCopyContextMenu($event, rowIndex, columnIndex)"
                   >
                     <span v-if="column.key === 'name'" class="schema-table-name">
                       <span class="schema-table-icon table-icon" />

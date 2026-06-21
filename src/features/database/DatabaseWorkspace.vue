@@ -1,9 +1,13 @@
 <script setup>
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, shallowRef, watch } from "vue";
 import { ElMessage } from "element-plus/es/components/message/index";
-import { Check, Close, DataAnalysis, DocumentChecked, Minus, Plus, Refresh, Right, Search, VideoPlay } from "@element-plus/icons-vue";
 import { ElMessageBox } from "element-plus/es/components/message-box/index";
 import ContextMenu from "../../shared/ContextMenu.vue";
+import DatabaseEmptyState from "./DatabaseEmptyState.vue";
+import DatabaseQueryEditor from "./DatabaseQueryEditor.vue";
+import DatabaseResultFooter from "./DatabaseResultFooter.vue";
+import DatabaseSearchBar from "./DatabaseSearchBar.vue";
+import DatabaseVirtualTable from "./DatabaseVirtualTable.vue";
 import TableDesigner from "./TableDesigner.vue";
 import { describeMysqlTable, executeMysqlQuery } from "./mysqlApi";
 import { ensureMysqlConnection, formatMysqlMeta } from "./databaseDefaults";
@@ -21,8 +25,6 @@ import {
 } from "./databaseTableDesigner";
 import {
   DEFAULT_PAGE_SIZE,
-  PAGE_SIZE_OPTIONS,
-  TABLE_COLUMN_MIN_WIDTH,
   TABLE_OVERSCAN,
   TABLE_ROW_HEIGHT,
   clampColumnWidth,
@@ -191,6 +193,20 @@ watch(
     clearResultCellSelection();
     resetTableScroll();
   },
+);
+
+watch(
+  () => tableViewportElement(tableViewport),
+  (viewport) => {
+    tableResizeObserver?.disconnect();
+    tableResizeObserver = null;
+    if (viewport) {
+      tableResizeObserver = new ResizeObserver(updateTableViewportHeight);
+      tableResizeObserver.observe(viewport);
+      updateTableViewportHeight();
+    }
+  },
+  { flush: "post" },
 );
 
 const activeSchemaTables = computed(() => {
@@ -825,14 +841,16 @@ function restoreTabViewState(tabId) {
 }
 
 function applyStoredScrollState() {
-  if (schemaTableViewport.value) {
-    schemaTableViewport.value.scrollTop = schemaTableScrollTop.value;
-    schemaTableViewport.value.scrollLeft = schemaTableScrollLeft.value;
+  const schemaViewport = tableViewportElement(schemaTableViewport);
+  if (schemaViewport) {
+    schemaViewport.scrollTop = schemaTableScrollTop.value;
+    schemaViewport.scrollLeft = schemaTableScrollLeft.value;
   }
 
-  if (tableViewport.value) {
-    tableViewport.value.scrollTop = tableScrollTop.value;
-    tableViewport.value.scrollLeft = tableScrollLeft.value;
+  const resultViewport = tableViewportElement(tableViewport);
+  if (resultViewport) {
+    resultViewport.scrollTop = tableScrollTop.value;
+    resultViewport.scrollLeft = tableScrollLeft.value;
   }
   updateTableViewportHeight();
 }
@@ -1719,7 +1737,7 @@ function startCellEdit(rowIndex, columnIndex) {
     value: row[column.key] ?? "",
   };
   nextTick(() => {
-    const input = tableViewport.value?.querySelector(".virtual-table__cell-input");
+    const input = tableViewportElement(tableViewport)?.querySelector(".virtual-table__cell-input");
     input?.focus();
     input?.select();
   });
@@ -1749,10 +1767,6 @@ function isEditingResultCell(row, column) {
 
 function selectSchemaTable(row) {
   selectedSchemaTableKey.value = schemaTableSelectKey(row);
-}
-
-function schemaTableRowClass({ row }) {
-  return selectedSchemaTableKey.value === schemaTableSelectKey(row) ? "selected-schema-table-row" : "";
 }
 
 function absoluteResultRowIndex(visibleIndex) {
@@ -2003,8 +2017,12 @@ function handleTableScroll(event) {
   tableScrollLeft.value = event.currentTarget.scrollLeft;
 }
 
+function tableViewportElement(viewportRef) {
+  return viewportRef.value?.viewportRef ?? viewportRef.value ?? null;
+}
+
 function updateTableViewportHeight() {
-  tableViewportHeight.value = tableViewport.value?.clientHeight || 420;
+  tableViewportHeight.value = tableViewportElement(tableViewport)?.clientHeight || 420;
 }
 
 function resetTableScroll() {
@@ -2012,23 +2030,21 @@ function resetTableScroll() {
   tableScrollLeft.value = 0;
   schemaTableScrollTop.value = 0;
   schemaTableScrollLeft.value = 0;
-  if (schemaTableViewport.value) {
-    schemaTableViewport.value.scrollTop = 0;
-    schemaTableViewport.value.scrollLeft = 0;
+  const schemaViewport = tableViewportElement(schemaTableViewport);
+  if (schemaViewport) {
+    schemaViewport.scrollTop = 0;
+    schemaViewport.scrollLeft = 0;
   }
-  if (tableViewport.value) {
-    tableViewport.value.scrollTop = 0;
-    tableViewport.value.scrollLeft = 0;
+  const resultViewport = tableViewportElement(tableViewport);
+  if (resultViewport) {
+    resultViewport.scrollTop = 0;
+    resultViewport.scrollLeft = 0;
   }
   updateTableViewportHeight();
 }
 
 onMounted(() => {
   updateTableViewportHeight();
-  if (tableViewport.value) {
-    tableResizeObserver = new ResizeObserver(updateTableViewportHeight);
-    tableResizeObserver.observe(tableViewport.value);
-  }
   window.addEventListener("mouseup", stopSchemaRowSelection);
   window.addEventListener("mouseup", stopSchemaCellSelection);
   window.addEventListener("mouseup", stopResultRowSelection);
@@ -2289,119 +2305,46 @@ function handlePageChange(page) {
 <template>
   <section class="database-workspace" v-loading="loading">
     <section class="content-panel" :class="{ 'is-empty': !activeTopTab || activeTopTab.id === 'database' }">
-      <div v-if="!activeTopTab || activeTopTab.id === 'database'" class="empty-workspace">
-        <div class="empty-workspace__panel">
-          <div class="empty-workspace__visual">
-            <el-icon><DataAnalysis /></el-icon>
-          </div>
-          <div class="empty-workspace__copy">
-            <p>待打开</p>
-            <strong>{{ normalizedConnection.name ?? "选择一个数据库连接" }}</strong>
-            <span>{{ databaseTarget }}</span>
-          </div>
-          <div class="empty-workspace__steps">
-            <div class="empty-workspace__step active">
-              <span>1</span>
-              <strong>选择连接</strong>
-            </div>
-            <el-icon><Right /></el-icon>
-            <div class="empty-workspace__step">
-              <span>2</span>
-              <strong>打开库</strong>
-            </div>
-            <el-icon><Right /></el-icon>
-            <div class="empty-workspace__step">
-              <span>3</span>
-              <strong>查看表</strong>
-            </div>
-          </div>
-        </div>
-      </div>
+      <DatabaseEmptyState
+        v-if="!activeTopTab || activeTopTab.id === 'database'"
+        :connection-name="normalizedConnection.name"
+        :database-target="databaseTarget"
+      />
 
       <section v-else-if="activeTopTab.kind === 'schema'" class="tab-content">
-        <div v-if="tableSearchOpen" class="table-search">
-          <el-icon><Search /></el-icon>
-          <input
-            ref="searchInputRef"
-            v-model="tableSearchQuery"
-            type="search"
-            placeholder="搜索表列表"
-            @keydown="handleSearchKeydown"
-          />
-          <span>{{ searchedSchemaTables.length }} / {{ activeSchemaTables.length }}</span>
-          <button type="button" aria-label="关闭搜索" @click="closeTableSearch">
-            <el-icon><Close /></el-icon>
-          </button>
-        </div>
-        <div class="virtual-table" @contextmenu.prevent="openCopyContextMenu">
-          <div class="virtual-table__header-wrap">
-            <div class="virtual-table__gutter-head" />
-            <div
-              class="virtual-table__header"
-              :style="{
-                gridTemplateColumns: schemaTableGridTemplate,
-                width: `${schemaTableContentWidth}px`,
-                transform: `translateX(-${schemaTableScrollLeft}px)`,
-              }"
-            >
-              <div v-for="column in schemaTableColumns" :key="column.key" class="virtual-table__th">
-                <span class="virtual-table__th-label">{{ column.label }}</span>
-                <span
-                  class="virtual-table__resize-handle"
-                  @mousedown.stop.prevent="startColumnResize($event, column)"
-                />
-              </div>
-            </div>
-          </div>
-          <div ref="schemaTableViewport" class="virtual-table__viewport" @scroll="handleSchemaTableScroll">
-            <div class="virtual-table__body" :style="{ width: `${schemaTableContentWidth + 32}px` }">
-              <div class="virtual-table__gutter">
-                <div
-                  v-for="(row, rowIndex) in searchedSchemaTables"
-                  :key="`schema-gutter-${row.name}`"
-                  class="virtual-table__gutter-cell"
-                  :class="{ selected: isSchemaRowSelected(rowIndex) }"
-                  @mousedown.prevent="startSchemaRowSelection($event, rowIndex)"
-                  @mouseenter="extendSchemaRowSelection(rowIndex)"
-                  @dblclick="openSchemaTable(row)"
-                  @contextmenu.prevent.stop="openCopyContextMenu($event, rowIndex)"
-                />
-              </div>
-              <div class="virtual-table__rows">
-                <div
-                  v-for="(row, rowIndex) in searchedSchemaTables"
-                  :key="row.name"
-                  class="virtual-table__row"
-                  :class="{ selected: isSchemaRowSelected(rowIndex) }"
-                  :style="{ gridTemplateColumns: schemaTableGridTemplate }"
-                  @dblclick="openSchemaTable(row)"
-                  @contextmenu.prevent.stop="openCopyContextMenu($event, rowIndex)"
-                >
-                  <div
-                    v-for="(column, columnIndex) in schemaTableColumns"
-                    :key="column.key"
-                    class="virtual-table__cell"
-                    :class="{
-                      selected: isSchemaCellSelected(rowIndex, columnIndex),
-                      matched: hasTableSearch && schemaTableCellValue(row, column).toLowerCase().includes(normalizedTableSearch),
-                      'is-right': column.align === 'right',
-                    }"
-                    :title="schemaTableCellValue(row, column)"
-                    @mousedown.prevent="startSchemaCellSelection($event, rowIndex, columnIndex)"
-                    @mouseenter="extendSchemaCellSelection(rowIndex, columnIndex)"
-                    @contextmenu.prevent.stop="openCopyContextMenu($event, rowIndex, columnIndex)"
-                  >
-                    <span v-if="column.key === 'name'" class="schema-table-name">
-                      <span class="schema-table-icon table-icon" />
-                      <span class="schema-table-name__text">{{ row.name }}</span>
-                    </span>
-                    <template v-else>{{ schemaTableCellValue(row, column) }}</template>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
+        <DatabaseSearchBar
+          v-if="tableSearchOpen"
+          ref="searchInputRef"
+          v-model="tableSearchQuery"
+          placeholder="搜索表列表"
+          :matched-count="searchedSchemaTables.length"
+          :total-count="activeSchemaTables.length"
+          @keydown="handleSearchKeydown"
+          @close="closeTableSearch"
+        />
+        <DatabaseVirtualTable
+          ref="schemaTableViewport"
+          is-schema-table
+          row-key-prefix="schema"
+          :columns="schemaTableColumns"
+          :rows="searchedSchemaTables"
+          :grid-template="schemaTableGridTemplate"
+          :content-width="schemaTableContentWidth"
+          :scroll-left="schemaTableScrollLeft"
+          :has-search="hasTableSearch"
+          :normalized-search="normalizedTableSearch"
+          :cell-value="schemaTableCellValue"
+          :is-row-selected="isSchemaRowSelected"
+          :is-cell-selected="isSchemaCellSelected"
+          @scroll="handleSchemaTableScroll"
+          @resize-column="startColumnResize"
+          @row-selection-start="startSchemaRowSelection"
+          @row-selection-extend="extendSchemaRowSelection"
+          @cell-selection-start="startSchemaCellSelection"
+          @cell-selection-extend="extendSchemaCellSelection"
+          @context-menu="openCopyContextMenu"
+          @open-row="openSchemaTable"
+        />
       </section>
 
       <TableDesigner
@@ -2421,196 +2364,78 @@ function handlePageChange(page) {
           'query-tab-empty': activeTopTab.kind === 'query' && !shouldShowResultPanel,
         }"
       >
-        <div v-if="activeTopTab.kind === 'query'" class="query-editor">
-          <div class="query-editor__bar">
-            <el-select
-              v-model="activeQuerySchemaName"
-              class="query-schema-select"
-              size="small"
-              filterable
-              clearable
-              placeholder="选择库"
-              no-match-text="没有匹配的库"
-              no-data-text="暂无库"
-              popper-class="query-schema-select-popper"
-              :disabled="querySchemaOptions.length === 0"
-            >
-              <el-option
-                v-for="schema in querySchemaOptions"
-                :key="schema"
-                :label="schema"
-                :value="schema"
-              />
-            </el-select>
-            <div class="query-editor__actions">
-              <el-button
-                class="query-run-button"
-                :icon="VideoPlay"
-                size="small"
-                @click="executeActiveQuery"
-              >
-                {{ queryRunLabel }}
-              </el-button>
-              <el-button
-                class="query-run-button"
-                :icon="DocumentChecked"
-                size="small"
-                @click="saveActiveQuery"
-              >
-                保存
-              </el-button>
-            </div>
-          </div>
-          <div ref="queryEditorRoot" class="query-editor__host" :class="{ ready: queryEditorReady }" />
-        </div>
-        <div v-if="shouldShowResultPanel && tableSearchOpen" class="table-search">
-          <el-icon><Search /></el-icon>
-          <input
-            ref="searchInputRef"
-            v-model="tableSearchQuery"
-            type="search"
-            :placeholder="activeTopTab.kind === 'query' ? '搜索查询结果' : '搜索当前页数据'"
-            @keydown="handleSearchKeydown"
-          />
-          <span>{{ searchedResultRows.length }} / {{ activeResult?.rows.length ?? 0 }}</span>
-          <button type="button" aria-label="关闭搜索" @click="closeTableSearch">
-            <el-icon><Close /></el-icon>
-          </button>
-        </div>
-        <div v-if="shouldShowResultPanel" class="virtual-table" @contextmenu.prevent="openCopyContextMenu">
-          <div class="virtual-table__header-wrap">
-            <div class="virtual-table__gutter-head" />
-            <div
-              class="virtual-table__header"
-              :style="{
-                gridTemplateColumns: tableGridTemplate,
-                width: `${tableContentWidth}px`,
-                transform: `translateX(-${tableScrollLeft}px)`,
-              }"
-            >
-              <div v-for="column in tableColumns" :key="column.key" class="virtual-table__th">
-                <span class="virtual-table__th-label">{{ column.label }}</span>
-                <span
-                  class="virtual-table__resize-handle"
-                  @mousedown.stop.prevent="startColumnResize($event, column)"
-                />
-              </div>
-            </div>
-          </div>
-          <div ref="tableViewport" class="virtual-table__viewport" @scroll="handleTableScroll">
-            <div class="virtual-table__body" :style="{ width: `${tableContentWidth + 32}px` }">
-              <div class="virtual-table__gutter">
-                <div class="virtual-table__spacer" :style="{ height: `${visibleTableRows.top}px` }" />
-                <div
-                  v-for="(_, visibleIndex) in visibleTableRows.rows"
-                  :key="`gutter-${visibleTableRows.start + visibleIndex}`"
-                  class="virtual-table__gutter-cell"
-                  :class="{ selected: isResultRowSelected(visibleIndex) }"
-                  @mousedown.prevent="startResultRowSelection($event, visibleIndex)"
-                  @mouseenter="extendResultRowSelection(visibleIndex)"
-                  @contextmenu.prevent.stop="openCopyContextMenu($event, absoluteResultRowIndex(visibleIndex))"
-                />
-                <div class="virtual-table__spacer" :style="{ height: `${visibleTableRows.bottom}px` }" />
-              </div>
-              <div class="virtual-table__rows">
-                <div class="virtual-table__spacer" :style="{ height: `${visibleTableRows.top}px` }" />
-                <div
-                  v-for="(row, visibleIndex) in visibleTableRows.rows"
-                  :key="visibleTableRows.start + visibleIndex"
-                class="virtual-table__row"
-                :class="{ selected: isResultRowSelected(visibleIndex) }"
-                :style="{ gridTemplateColumns: tableGridTemplate }"
-                @contextmenu.prevent.stop="openCopyContextMenu($event, absoluteResultRowIndex(visibleIndex))"
-              >
-              <div
-                v-for="(column, columnIndex) in tableColumns"
-                :key="column.key"
-                class="virtual-table__cell"
-                :class="{
-                  selected: isResultCellSelected(visibleIndex, columnIndex),
-                  changed: isChangedResultCell(row, column),
-                  'is-new-row': isNewResultRow(row),
-                  matched: hasTableSearch && tableCellValue(row, column).toLowerCase().includes(normalizedTableSearch),
-                }"
-                :title="tableCellValue(row, column)"
-                @mousedown.prevent="startResultCellSelection($event, visibleIndex, columnIndex)"
-                @mouseenter="extendResultCellSelection(visibleIndex, columnIndex)"
-                @contextmenu.prevent.stop="openCopyContextMenu($event, absoluteResultRowIndex(visibleIndex), columnIndex)"
-                @dblclick.stop="startCellEdit(absoluteResultRowIndex(visibleIndex), columnIndex)"
-              >
-                <input
-                  v-if="isEditingResultCell(row, column)"
-                  v-model="editingCell.value"
-                  class="virtual-table__cell-input"
-                  type="text"
-                  autofocus
-                  @mousedown.stop
-                  @blur="commitCellEdit"
-                  @keydown.enter.prevent="commitCellEdit"
-                  @keydown.esc.prevent="cancelCellEdit"
-                />
-                <template v-else>{{ tableCellValue(row, column) }}</template>
-              </div>
-                </div>
-                <div class="virtual-table__spacer" :style="{ height: `${visibleTableRows.bottom}px` }" />
-              </div>
-            </div>
-          </div>
-        </div>
-        <footer v-if="shouldShowResultPanel" class="table-footer">
-          <div class="table-footer__tools" aria-label="数据工具">
-            <button type="button" class="table-footer__tool" title="新增记录" :disabled="!canEditActiveResult" @click="addResultRow">
-              <el-icon><Plus /></el-icon>
-            </button>
-            <button
-              type="button"
-              class="table-footer__tool"
-              title="删除记录"
-              :disabled="activeTopTab.kind !== 'table' || selectedResultRows().length === 0"
-              @click="deleteSelectedRecords"
-            >
-              <el-icon><Minus /></el-icon>
-            </button>
-            <span class="table-footer__tool-separator" />
-            <button type="button" class="table-footer__tool" title="提交更改" :disabled="!hasPendingTableChanges || loading" @click="commitTableChanges">
-              <el-icon><Check /></el-icon>
-            </button>
-            <button type="button" class="table-footer__tool" title="取消更改" :disabled="!hasPendingTableChanges" @click="cancelTableChanges">
-              <el-icon><Close /></el-icon>
-            </button>
-            <span class="table-footer__tool-separator" />
-            <button type="button" class="table-footer__tool" title="刷新" :disabled="loading" @click="refreshActiveResult">
-              <el-icon><Refresh /></el-icon>
-            </button>
-            <button
-              type="button"
-              class="table-footer__tool table-footer__tool--block"
-              title="停止"
-              :disabled="!canStopActiveOperation"
-              @click="stopActiveOperation"
-            />
-          </div>
-          <span v-if="activeResult" class="table-footer__summary">
-            <template v-if="activeTopTab.kind === 'table'">
-              第 {{ activeResult.page }} 页 · 显示 {{ searchedResultRows.length }} / {{ activeResult.totalRows }} 行 · {{ activeResult.elapsedMs }}ms
-            </template>
-            <template v-else>
-              显示 {{ searchedResultRows.length }} / {{ activeResult.totalRows }} 行 · {{ activeResult.elapsedMs }}ms
-            </template>
-          </span>
-          <el-pagination
-            v-if="activeTopTab.kind === 'table'"
-            background
-            layout="sizes, prev, pager, next, jumper"
-            popper-class="table-page-size-popper"
-            :current-page="activeResult?.page ?? 1"
-            :page-size="activeResult?.pageSize ?? DEFAULT_PAGE_SIZE"
-            :page-sizes="PAGE_SIZE_OPTIONS"
-            :total="activeResult?.totalRows ?? 0"
-            @size-change="handlePageSizeChange"
-            @current-change="handlePageChange"
-          />
-        </footer>
+        <DatabaseQueryEditor
+          v-if="activeTopTab.kind === 'query'"
+          v-model:schema-name="activeQuerySchemaName"
+          :schema-options="querySchemaOptions"
+          :run-label="queryRunLabel"
+          :ready="queryEditorReady"
+          @run="executeActiveQuery"
+          @save="saveActiveQuery"
+        >
+          <div ref="queryEditorRoot" class="query-editor-root" />
+        </DatabaseQueryEditor>
+        <DatabaseSearchBar
+          v-if="shouldShowResultPanel && tableSearchOpen"
+          ref="searchInputRef"
+          v-model="tableSearchQuery"
+          :placeholder="activeTopTab.kind === 'query' ? '搜索查询结果' : '搜索当前页数据'"
+          :matched-count="searchedResultRows.length"
+          :total-count="activeResult?.rows.length ?? 0"
+          @keydown="handleSearchKeydown"
+          @close="closeTableSearch"
+        />
+        <DatabaseVirtualTable
+          v-if="shouldShowResultPanel"
+          ref="tableViewport"
+          row-key-prefix="result"
+          :columns="tableColumns"
+          :rows="searchedResultRows"
+          :visible-rows="visibleTableRows"
+          :grid-template="tableGridTemplate"
+          :content-width="tableContentWidth"
+          :scroll-left="tableScrollLeft"
+          :has-search="hasTableSearch"
+          :normalized-search="normalizedTableSearch"
+          :editing-cell="editingCell"
+          :cell-value="tableCellValue"
+          :is-row-selected="isResultRowSelected"
+          :is-cell-selected="isResultCellSelected"
+          :is-changed-cell="isChangedResultCell"
+          :is-new-row="isNewResultRow"
+          :is-editing-cell="isEditingResultCell"
+          :absolute-row-index="absoluteResultRowIndex"
+          @scroll="handleTableScroll"
+          @resize-column="startColumnResize"
+          @row-selection-start="startResultRowSelection"
+          @row-selection-extend="extendResultRowSelection"
+          @cell-selection-start="startResultCellSelection"
+          @cell-selection-extend="extendResultCellSelection"
+          @context-menu="openCopyContextMenu"
+          @edit-cell="startCellEdit"
+          @commit-edit="commitCellEdit"
+          @cancel-edit="cancelCellEdit"
+          @update-edit-value="editingCell.value = $event"
+        />
+        <DatabaseResultFooter
+          v-if="shouldShowResultPanel"
+          :active-kind="activeTopTab.kind"
+          :result="activeResult"
+          :searched-row-count="searchedResultRows.length"
+          :can-edit="canEditActiveResult"
+          :selected-row-count="selectedResultRows().length"
+          :has-pending-changes="hasPendingTableChanges"
+          :loading="loading"
+          :can-stop="canStopActiveOperation"
+          @add-row="addResultRow"
+          @delete-records="deleteSelectedRecords"
+          @commit-changes="commitTableChanges"
+          @cancel-changes="cancelTableChanges"
+          @refresh="refreshActiveResult"
+          @stop="stopActiveOperation"
+          @page-size-change="handlePageSizeChange"
+          @page-change="handlePageChange"
+        />
       </section>
     </section>
 
@@ -2644,146 +2469,6 @@ function handlePageChange(page) {
   padding-left: 0;
 }
 
-.empty-workspace {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  height: 100%;
-  min-width: 0;
-  min-height: 0;
-  padding: 26px;
-  background:
-    linear-gradient(90deg, rgba(242, 107, 58, 0.05), transparent 34%),
-    linear-gradient(180deg, var(--surface-muted), #fff);
-  color: var(--muted);
-}
-
-.empty-workspace__panel {
-  display: grid;
-  justify-items: center;
-  width: min(520px, 100%);
-  gap: 18px;
-  text-align: center;
-}
-
-.empty-workspace__visual {
-  display: grid;
-  place-items: center;
-  width: 58px;
-  height: 58px;
-  border: 1px solid #f5c5b3;
-  border-radius: 8px;
-  background: #fff7f4;
-  color: var(--orange);
-  box-shadow: 0 10px 26px rgba(242, 107, 58, 0.13);
-}
-
-.empty-workspace__visual .el-icon {
-  font-size: 28px;
-}
-
-.empty-workspace__copy {
-  display: grid;
-  gap: 6px;
-}
-
-.empty-workspace__copy p {
-  margin: 0;
-  color: var(--orange);
-  font-size: 11px;
-  font-weight: 780;
-}
-
-.empty-workspace__copy strong {
-  color: var(--text);
-  font-size: 20px;
-  font-weight: 780;
-}
-
-.empty-workspace__copy span {
-  color: var(--muted);
-  font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
-  font-size: 12px;
-}
-
-.empty-workspace__steps {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 16px minmax(0, 1fr) 16px minmax(0, 1fr);
-  align-items: center;
-  width: 100%;
-  max-width: 430px;
-  gap: 8px;
-}
-
-.empty-workspace__steps > .el-icon {
-  color: var(--line-strong);
-  font-size: 13px;
-}
-
-.empty-workspace__step {
-  display: grid;
-  justify-items: center;
-  min-width: 0;
-  gap: 7px;
-}
-
-.empty-workspace__step span {
-  display: grid;
-  place-items: center;
-  width: 26px;
-  height: 26px;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  background: #fff;
-  color: var(--muted);
-  font-size: 12px;
-  font-weight: 760;
-}
-
-.empty-workspace__step strong {
-  max-width: 100%;
-  overflow: hidden;
-  color: var(--muted);
-  font-size: 12px;
-  font-weight: 650;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.empty-workspace__step.active span {
-  border-color: #f5c5b3;
-  background: var(--orange-soft);
-  color: var(--orange);
-}
-
-.empty-workspace__step.active strong {
-  color: var(--text);
-}
-
-.empty-workspace__actions {
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: center;
-  gap: 8px;
-}
-
-.empty-workspace__actions :deep(.el-button) {
-  height: 34px;
-  margin: 0;
-  border-radius: 8px;
-  font-size: 12px;
-  font-weight: 650;
-}
-
-.empty-workspace__actions :deep(.el-button--primary) {
-  border-color: var(--orange);
-  background: var(--orange);
-}
-
-.empty-workspace__actions :deep(.el-button--primary:hover) {
-  border-color: #e65d2e;
-  background: #e65d2e;
-}
 
 .tab-content {
   display: flex;
@@ -2795,716 +2480,5 @@ function handlePageChange(page) {
   border-radius: 10px;
   background: #fff;
   box-shadow: none;
-}
-
-.query-editor {
-  display: flex;
-  flex: 0 0 238px;
-  min-height: 160px;
-  flex-direction: column;
-  border-bottom: 1px solid var(--line);
-  background: var(--panel);
-}
-
-.query-tab-empty .query-editor {
-  flex: 1 1 auto;
-  border-bottom: 0;
-}
-
-.query-editor__bar {
-  display: flex;
-  align-items: center;
-  min-height: 38px;
-  padding: 0 8px 0 10px;
-  border-bottom: 1px solid var(--line);
-  background: var(--surface-muted);
-}
-
-.query-editor__actions {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-left: auto;
-}
-
-.query-editor__actions :deep(.el-button + .el-button) {
-  margin-left: 0;
-}
-
-.query-editor__bar :deep(.query-schema-select) {
-  width: min(220px, 48%);
-}
-
-.query-editor__bar :deep(.query-schema-select .el-select__wrapper) {
-  min-height: 28px;
-  border-radius: 7px;
-  background: #fff;
-  box-shadow: 0 0 0 1px var(--line) inset;
-}
-
-.query-editor__bar :deep(.query-schema-select .el-select__wrapper:hover) {
-  box-shadow: 0 0 0 1px var(--line-strong) inset;
-}
-
-.query-editor__bar :deep(.query-schema-select .el-select__wrapper.is-focused) {
-  box-shadow: 0 0 0 1px var(--orange) inset, 0 0 0 3px rgba(242, 107, 58, 0.10);
-}
-
-.query-editor__bar :deep(.query-schema-select .el-select__selected-item),
-.query-editor__bar :deep(.query-schema-select .el-input__inner) {
-  color: var(--muted);
-  font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
-  font-size: 12px;
-}
-
-.query-editor__bar :deep(.query-run-button) {
-  height: 28px;
-  border: 1px solid var(--line);
-  border-radius: 7px;
-  background: #fff;
-  color: var(--text);
-  font-size: 12px;
-  font-weight: 650;
-  box-shadow: none;
-}
-
-.query-editor__bar :deep(.query-run-button:hover) {
-  border-color: var(--line-strong);
-  background: var(--surface-strong);
-  color: var(--text);
-}
-
-.query-editor__bar :deep(.query-run-button:active) {
-  border-color: #f5c5b3;
-  background: var(--orange-soft);
-  color: var(--orange);
-}
-
-.query-editor__bar :deep(.query-run-button .el-icon) {
-  color: var(--orange);
-}
-
-.query-editor__host {
-  min-height: 0;
-  flex: 1;
-  width: 100%;
-  overflow: hidden;
-  background: #fff;
-}
-
-.query-editor__host :deep(.cm-editor) {
-  height: 100%;
-}
-
-.query-editor__host :deep(.query-selected-text) {
-  border-radius: 3px;
-  background: #ffc7b3;
-  color: var(--text);
-}
-
-.query-editor__host :deep(.cm-tooltip),
-.query-editor__host :deep(.cm-tooltip-autocomplete) {
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  background: #fff;
-  box-shadow: var(--shadow-card);
-  color: var(--text);
-  font-family: var(--app-font);
-  font-size: 12px;
-}
-
-.query-editor__host :deep(.cm-tooltip-autocomplete ul li[aria-selected]) {
-  background: var(--surface-strong);
-  color: var(--text);
-}
-
-.table-search {
-  display: grid;
-  grid-template-columns: 18px minmax(0, 1fr) auto 28px;
-  gap: 7px;
-  align-items: center;
-  min-height: 38px;
-  padding: 5px 7px;
-  border-bottom: 1px solid var(--line);
-  background: #fff;
-  color: var(--muted);
-  font-size: 12px;
-}
-
-.table-search input {
-  width: 100%;
-  height: 28px;
-  min-width: 0;
-  padding: 0 9px;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  outline: none;
-  background: #fff;
-  color: var(--text);
-  font: inherit;
-}
-
-.table-search input:focus {
-  border-color: var(--orange);
-  box-shadow: 0 0 0 3px rgba(242, 107, 58, 0.13);
-}
-
-.table-search span {
-  color: var(--faint);
-  white-space: nowrap;
-}
-
-.table-search button {
-  display: grid;
-  place-items: center;
-  width: 28px;
-  height: 28px;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  background: #fff;
-  color: var(--muted);
-  cursor: pointer;
-}
-
-.table-search button:hover {
-  border-color: var(--line-strong);
-  background: var(--surface-strong);
-  color: var(--text);
-}
-
-.hint {
-  color: var(--muted);
-  font-size: 12px;
-  font-weight: 400;
-}
-
-.tab-content :deep(.el-table) {
-  min-height: 0;
-  flex: 1;
-  --el-table-border-color: var(--line);
-  --el-table-border: 1px solid var(--line);
-  --el-table-header-bg-color: var(--surface-muted);
-  --el-table-header-text-color: var(--muted);
-  --el-table-row-hover-bg-color: #fafafa;
-  color: #303647;
-  font-size: 12px;
-  font-weight: 450;
-}
-
-.tab-content.has-footer :deep(.el-table) {
-  flex-basis: calc(100% - 82px);
-}
-
-.tab-content :deep(.el-table th.el-table__cell) {
-  height: 34px;
-  padding: 0;
-  background: var(--surface-muted);
-  border-bottom: 1px solid var(--line);
-  color: var(--muted);
-  font-size: 12px;
-  font-weight: 400;
-}
-
-.tab-content :deep(.el-table th.el-table__cell .cell) {
-  color: var(--muted);
-  font-size: 12px;
-  font-weight: 400;
-  line-height: 34px;
-}
-
-.tab-content :deep(.el-table .sort-caret.ascending) {
-  border-bottom-color: var(--faint);
-}
-
-.tab-content :deep(.el-table .sort-caret.descending) {
-  border-top-color: var(--faint);
-}
-
-.tab-content :deep(.el-table .ascending .sort-caret.ascending) {
-  border-bottom-color: var(--orange);
-}
-
-.tab-content :deep(.el-table .descending .sort-caret.descending) {
-  border-top-color: var(--orange);
-}
-
-.tab-content :deep(.el-table .el-table__cell) {
-  height: 34px;
-  padding: 0;
-  border-right-color: var(--line);
-  border-bottom-color: var(--line);
-}
-
-.tab-content :deep(.el-table .cell) {
-  display: flex;
-  align-items: center;
-  min-height: 34px;
-  padding: 0 10px;
-  line-height: 34px;
-  white-space: nowrap;
-}
-
-.tab-content :deep(.el-table .selected-schema-table-row > .el-table__cell) {
-  background: var(--orange-soft);
-}
-
-.tab-content :deep(.el-table .selected-schema-table-row:hover > .el-table__cell) {
-  background: #ffe7de;
-}
-
-.tab-content :deep(.el-table__fixed),
-.tab-content :deep(.el-table__fixed-right) {
-  box-shadow: 1px 0 0 var(--line);
-}
-
-.schema-table-name {
-  display: inline-flex;
-  align-items: center;
-  gap: 10px;
-  min-width: 0;
-}
-
-.schema-table-icon {
-  position: relative;
-  display: inline-grid;
-  place-items: center;
-  width: 18px;
-  height: 18px;
-  flex: 0 0 18px;
-  color: var(--muted);
-}
-
-.schema-table-icon.table-icon {
-  border: 1px solid var(--line-strong);
-  border-radius: 5px;
-  background: #fff;
-  color: var(--blue);
-}
-
-.schema-table-icon.table-icon::before {
-  position: absolute;
-  width: 12px;
-  height: 10px;
-  border: 1.5px solid currentColor;
-  border-radius: 2px;
-  content: "";
-}
-
-.schema-table-icon.table-icon::after {
-  position: absolute;
-  width: 12px;
-  height: 1.5px;
-  background:
-    linear-gradient(currentColor, currentColor) 0 0 / 100% 100% no-repeat,
-    linear-gradient(currentColor, currentColor) 0 4px / 100% 100% no-repeat;
-  box-shadow: 0 -3px 0 currentColor;
-  opacity: 0.55;
-  content: "";
-}
-
-.schema-table-name__text {
-  min-width: 0;
-  overflow: hidden;
-  color: var(--text);
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.virtual-table {
-  display: flex;
-  min-height: 0;
-  flex: 1;
-  flex-direction: column;
-  overflow: hidden;
-  color: #303647;
-  font-size: 12px;
-  font-weight: 400;
-}
-
-.virtual-table__header-wrap {
-  display: flex;
-  flex: 0 0 34px;
-  overflow: hidden;
-  border-bottom: 1px solid var(--line);
-  background: var(--surface-muted);
-}
-
-.virtual-table__gutter-head {
-  position: relative;
-  z-index: 3;
-  width: 32px;
-  flex: 0 0 32px;
-  border-right: 1px solid var(--line);
-  background: var(--surface-muted);
-}
-
-.virtual-table__header {
-  display: grid;
-  min-width: max-content;
-  will-change: transform;
-}
-
-.virtual-table__th {
-  position: relative;
-  display: flex;
-  align-items: center;
-  min-width: 0;
-  height: 34px;
-  padding: 0 10px;
-  overflow: hidden;
-  border-right: 1px solid var(--line);
-  color: var(--muted);
-  font-size: 12px;
-  font-weight: 400;
-  line-height: 34px;
-  user-select: none;
-}
-
-.virtual-table__th-label {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.virtual-table__resize-handle {
-  position: absolute;
-  top: 0;
-  right: -4px;
-  z-index: 2;
-  width: 8px;
-  height: 100%;
-  cursor: col-resize;
-}
-
-.virtual-table__resize-handle::after {
-  position: absolute;
-  top: 7px;
-  right: 3px;
-  width: 1px;
-  height: 20px;
-  background: transparent;
-  content: "";
-}
-
-.virtual-table__resize-handle:hover::after,
-:global(body.is-resizing-table-column) .virtual-table__resize-handle::after {
-  background: var(--orange);
-}
-
-:global(body.is-resizing-table-column) {
-  cursor: col-resize;
-  user-select: none;
-}
-
-.virtual-table__viewport {
-  min-height: 0;
-  flex: 1;
-  overflow: auto;
-}
-
-.virtual-table__body {
-  display: flex;
-  min-width: max-content;
-}
-
-.virtual-table__gutter {
-  position: sticky;
-  left: 0;
-  z-index: 2;
-  width: 32px;
-  flex: 0 0 32px;
-  border-right: 1px solid var(--line);
-  background: var(--panel);
-}
-
-.virtual-table__gutter-cell {
-  height: 34px;
-  border-bottom: 1px solid var(--line);
-  background: var(--surface-muted);
-  cursor: default;
-  user-select: none;
-}
-
-.virtual-table__gutter-cell:hover {
-  background: var(--surface-strong);
-}
-
-.virtual-table__gutter-cell.selected {
-  background: var(--orange-soft);
-  box-shadow: inset 2px 0 0 var(--orange);
-}
-
-.virtual-table__rows {
-  min-width: max-content;
-}
-
-.virtual-table__row {
-  display: grid;
-  min-width: max-content;
-  cursor: default;
-  user-select: none;
-}
-
-.virtual-table__row:hover .virtual-table__cell {
-  background: #fafafa;
-}
-
-.virtual-table__row.selected .virtual-table__cell {
-  background: var(--orange-soft);
-}
-
-.virtual-table__row.selected:hover .virtual-table__cell {
-  background: #ffe7de;
-}
-
-.virtual-table__cell {
-  display: flex;
-  align-items: center;
-  min-width: 0;
-  height: 34px;
-  padding: 0 10px;
-  overflow: hidden;
-  border-right: 1px solid var(--line);
-  border-bottom: 1px solid var(--line);
-  color: #303647;
-  line-height: 34px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.virtual-table__cell.is-right {
-  justify-content: flex-end;
-  text-align: right;
-}
-
-.virtual-table__cell.selected {
-  background: #ffe0d4;
-  color: var(--text);
-  box-shadow: inset 0 0 0 1px rgba(242, 107, 58, 0.18);
-}
-
-.virtual-table__cell.changed {
-  background: #fff4cf;
-  box-shadow: inset 0 -2px 0 #d9a621;
-}
-
-.virtual-table__cell.is-new-row {
-  background: #eaf7ef;
-  box-shadow: inset 0 -2px 0 #5aa469;
-}
-
-.virtual-table__cell-input {
-  width: calc(100% + 12px);
-  height: 26px;
-  margin: 0 -6px;
-  padding: 0 6px;
-  border: 1px solid var(--orange);
-  border-radius: 4px;
-  outline: none;
-  background: #fff;
-  color: var(--text);
-  font: inherit;
-  line-height: 24px;
-}
-
-.virtual-table__cell.matched {
-  background: #fff7d6;
-  color: var(--text);
-}
-
-.virtual-table__row:hover .virtual-table__cell.selected,
-.virtual-table__row.selected .virtual-table__cell.selected {
-  background: #ffd6c8;
-  color: var(--text);
-}
-
-.virtual-table__row:hover .virtual-table__cell.matched {
-  background: #fff0b8;
-}
-
-.virtual-table__spacer {
-  min-width: 1px;
-}
-
-.table-footer {
-  display: flex;
-  flex: 0 0 38px;
-  align-items: center;
-  justify-content: flex-start;
-  gap: 10px;
-  min-height: 38px;
-  padding: 0 10px;
-  border-top: 1px solid var(--line);
-  background: var(--surface-muted);
-  font-size: 12px;
-  font-weight: 400;
-}
-
-.table-footer__tools {
-  display: flex;
-  flex: 0 0 auto;
-  align-items: center;
-  gap: 4px;
-  min-width: 0;
-}
-
-.table-footer__tool {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 22px;
-  height: 22px;
-  padding: 0;
-  border: 0;
-  border-radius: 4px;
-  background: transparent;
-  color: #686d76;
-  cursor: pointer;
-  appearance: none;
-}
-
-.table-footer__tool .el-icon {
-  font-size: 16px;
-  font-weight: 700;
-}
-
-.table-footer__tool:hover:not(:disabled) {
-  background: var(--surface-strong);
-  color: var(--text);
-}
-
-.table-footer__tool:active:not(:disabled) {
-  background: #e8e9ec;
-}
-
-.table-footer__tool:disabled {
-  color: #c6c9ce;
-  cursor: default;
-}
-
-.table-footer__tool--block {
-  width: 22px;
-}
-
-.table-footer__tool--block::before {
-  width: 14px;
-  height: 14px;
-  border-radius: 2px;
-  background: currentColor;
-  content: "";
-}
-
-.table-footer__tool-separator {
-  width: 8px;
-  height: 1px;
-}
-
-.table-footer__summary {
-  flex: 0 0 auto;
-  margin-left: 4px;
-  color: var(--muted);
-  font-size: 12px;
-  font-weight: 400;
-  line-height: 24px;
-}
-
-.table-footer :deep(.el-pagination) {
-  --el-pagination-bg-color: #fff;
-  --el-pagination-button-color: var(--muted);
-  --el-pagination-button-disabled-bg-color: var(--surface-muted);
-  --el-pagination-button-disabled-color: var(--faint);
-  --el-pagination-hover-color: var(--orange);
-  --el-pagination-font-size: 12px;
-  --el-pagination-button-width: 24px;
-  --el-pagination-button-height: 24px;
-  margin-left: auto;
-  color: var(--muted);
-  font-size: 12px;
-  font-weight: 400;
-  line-height: 24px;
-}
-
-.table-footer :deep(.el-pagination span:not([class*="suffix"])),
-.table-footer :deep(.el-pagination button),
-.table-footer :deep(.el-pager li),
-.table-footer :deep(.el-pagination__jump),
-.table-footer :deep(.el-pagination__goto),
-.table-footer :deep(.el-pagination__classifier) {
-  color: var(--muted);
-  font-size: 12px;
-  font-weight: 400;
-  line-height: 24px;
-}
-
-.table-footer :deep(.el-pagination.is-background .btn-next),
-.table-footer :deep(.el-pagination.is-background .btn-prev),
-.table-footer :deep(.el-pagination.is-background .el-pager li) {
-  min-width: 24px;
-  height: 24px;
-  border: 1px solid var(--line);
-  border-radius: 7px;
-  background: #fff;
-  color: var(--muted);
-  font-size: 12px;
-  font-weight: 400;
-  line-height: 22px;
-}
-
-.table-footer :deep(.el-pagination.is-background .btn-next:hover),
-.table-footer :deep(.el-pagination.is-background .btn-prev:hover),
-.table-footer :deep(.el-pagination.is-background .el-pager li:hover) {
-  border-color: var(--line-strong);
-  background: var(--surface-strong);
-  color: var(--text);
-}
-
-.table-footer :deep(.el-pagination.is-background .el-pager li.is-active) {
-  border-color: var(--orange);
-  background: var(--orange);
-  color: #fff;
-  font-weight: 400;
-}
-
-.table-footer :deep(.el-pagination.is-background .btn-next.is-disabled),
-.table-footer :deep(.el-pagination.is-background .btn-prev.is-disabled) {
-  border-color: var(--line);
-  background: var(--surface-muted);
-  color: var(--faint);
-}
-
-.table-footer :deep(.el-select__wrapper),
-.table-footer :deep(.el-input__wrapper) {
-  height: 24px;
-  min-height: 24px;
-  border-radius: 6px;
-  background: #fff;
-  box-shadow: 0 0 0 1px var(--line) inset;
-}
-
-.table-footer :deep(.el-select__wrapper:hover),
-.table-footer :deep(.el-input__wrapper:hover) {
-  box-shadow: 0 0 0 1px var(--line-strong) inset;
-}
-
-.table-footer :deep(.el-select__wrapper.is-focused),
-.table-footer :deep(.el-input__wrapper.is-focus) {
-  box-shadow: 0 0 0 1px var(--orange) inset, 0 0 0 3px rgba(242, 107, 58, 0.10);
-}
-
-.table-footer :deep(.el-select__selected-item),
-.table-footer :deep(.el-input__inner) {
-  color: var(--text);
-  font-size: 12px;
-  font-weight: 400;
-}
-
-.table-footer :deep(.el-pagination__jump) {
-  margin-left: 10px;
-  color: var(--muted);
-}
-
-.table-footer :deep(.el-pagination__sizes) {
-  margin-right: 10px;
 }
 </style>

@@ -43,6 +43,7 @@ export async function runDatabaseObjectAction(payload) {
   const config = payload.connection.config;
   const schemaName = payload.schema?.name ?? payload.schema;
   const tableName = payload.table?.name ?? payload.table;
+  const tableNames = Array.isArray(payload.tables) ? [...new Set(payload.tables.filter(Boolean))] : [];
 
   if (payload.action === "drop-database" && schemaName) {
     await ElMessageBox.confirm(`确认删除库“${schemaName}”？此操作会删除库内所有对象。`, "删除库", confirmOptions);
@@ -72,6 +73,15 @@ export async function runDatabaseObjectAction(payload) {
     });
     ElMessage.success(payload.action === "copy-table-data" ? "表结构和数据已复制" : "表结构已复制");
     return { changed: true, type: "copy-table", database: schemaName, table: tableName, newTable };
+  }
+
+  if (payload.action === "drop-table" && schemaName && tableNames.length > 1) {
+    await ElMessageBox.confirm(`确认删除选中的 ${tableNames.length} 张表？`, "删除表", confirmOptions);
+    for (const table of tableNames) {
+      await dropMysqlTable(config, schemaName, table);
+    }
+    ElMessage.success("表已删除");
+    return { changed: true, type: "drop-table", database: schemaName, tables: tableNames };
   }
 
   if (payload.action === "drop-table" && schemaName && tableName) {

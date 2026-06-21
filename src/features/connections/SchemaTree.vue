@@ -13,6 +13,8 @@ const props = defineProps({
 
 const emit = defineEmits(["activate-schema", "create-query", "open-schema", "open-table-query", "database-object-action"]);
 const selectedKey = ref("");
+const selectedTableKeys = ref(new Set());
+const tableSelectionAnchor = ref(null);
 const openGroupKeys = ref(new Set());
 const schemaContextOpen = ref(false);
 const schemaContextPosition = ref({ x: 0, y: 0 });
@@ -120,6 +122,73 @@ function toggleGroup(schema, group) {
 
 function selectOnly(key) {
   selectedKey.value = key;
+  selectedTableKeys.value = new Set();
+  tableSelectionAnchor.value = null;
+}
+
+function tableNode(schema, group, item) {
+  return {
+    key: itemKey(schema, group, item),
+    schema,
+    group,
+    groupType: groupType(group),
+    item,
+    name: itemName(item),
+  };
+}
+
+function visibleTableNodes(schema, group) {
+  return (group.items ?? []).map((item) => tableNode(schema, group, item));
+}
+
+function isTableSelected(schema, group, item) {
+  return selectedTableKeys.value.has(itemKey(schema, group, item));
+}
+
+function selectedTablesFor(schema, group, item) {
+  const current = tableNode(schema, group, item);
+  const selectedKeys = selectedTableKeys.value.size > 0 ? selectedTableKeys.value : new Set([current.key]);
+  return visibleTableNodes(schema, group)
+    .filter((node) => selectedKeys.has(node.key))
+    .map((node) => node.name);
+}
+
+function selectTable(event, schema, group, item) {
+  const node = tableNode(schema, group, item);
+  selectedKey.value = node.key;
+
+  if (node.groupType !== "table") {
+    selectedTableKeys.value = new Set();
+    tableSelectionAnchor.value = null;
+    return;
+  }
+
+  const nodes = visibleTableNodes(schema, group);
+  if (event.shiftKey && tableSelectionAnchor.value?.groupKey === groupKey(schema, group)) {
+    const anchorIndex = nodes.findIndex((itemNode) => itemNode.key === tableSelectionAnchor.value.key);
+    const currentIndex = nodes.findIndex((itemNode) => itemNode.key === node.key);
+    if (anchorIndex >= 0 && currentIndex >= 0) {
+      const from = Math.min(anchorIndex, currentIndex);
+      const to = Math.max(anchorIndex, currentIndex);
+      selectedTableKeys.value = new Set(nodes.slice(from, to + 1).map((itemNode) => itemNode.key));
+      return;
+    }
+  }
+
+  if (event.metaKey || event.ctrlKey) {
+    const nextKeys = new Set(selectedTableKeys.value);
+    if (nextKeys.has(node.key)) {
+      nextKeys.delete(node.key);
+    } else {
+      nextKeys.add(node.key);
+    }
+    selectedTableKeys.value = nextKeys.size > 0 ? nextKeys : new Set([node.key]);
+    tableSelectionAnchor.value = { key: node.key, groupKey: groupKey(schema, group) };
+    return;
+  }
+
+  selectedTableKeys.value = new Set([node.key]);
+  tableSelectionAnchor.value = { key: node.key, groupKey: groupKey(schema, group) };
 }
 
 function openSchemaContextMenu(event, schema) {
@@ -137,7 +206,16 @@ function openObjectContextMenu(event, schema, group, item) {
   }
 
   const key = `${schemaKey(schema)}:${groupType(group)}:${itemName(item)}`;
-  contextObject.value = { schema, groupType: groupType(group), item: itemName(item) };
+  if (!selectedTableKeys.value.has(key)) {
+    selectedTableKeys.value = new Set([key]);
+    tableSelectionAnchor.value = { key, groupKey: groupKey(schema, group) };
+  }
+  contextObject.value = {
+    schema,
+    groupType: groupType(group),
+    item: itemName(item),
+    tables: selectedTablesFor(schema, group, item),
+  };
   selectedKey.value = key;
   objectContextPosition.value = { x: event.clientX, y: event.clientY };
   objectContextOpen.value = true;
@@ -178,6 +256,7 @@ function handleObjectContextSelect(item) {
     schema: contextObject.value.schema,
     groupType: contextObject.value.groupType,
     table: contextObject.value.item,
+    tables: contextObject.value.tables,
   });
 }
 
@@ -252,8 +331,11 @@ function includesQuery(value, query) {
           v-for="item in group.items"
           :key="item.id ?? itemName(item)"
           class="tree-item"
-          :class="{ selected: selectedKey === itemKey(schema, group, item) }"
-          @click.prevent="selectOnly(itemKey(schema, group, item))"
+          :class="{
+            selected: selectedKey === itemKey(schema, group, item),
+            'multi-selected': groupType(group) === 'table' && isTableSelected(schema, group, item),
+          }"
+          @click.prevent="selectTable($event, schema, group, item)"
           @dblclick="emit('open-table-query', { schema: schema.name, groupType: groupType(group), item: groupType(group) === 'query' ? item : itemName(item) })"
           @contextmenu.prevent="openObjectContextMenu($event, schema, group, item)"
         >
@@ -425,6 +507,19 @@ summary em {
 .tree-item.selected {
   background: var(--orange-soft);
   color: #a8421f;
+}
+
+.tree-item.multi-selected {
+  background: var(--blue-soft);
+  color: var(--blue-strong);
+}
+
+.tree-item.multi-selected.selected {
+  background:
+    linear-gradient(90deg, rgba(242, 107, 58, 0.16), rgba(37, 99, 235, 0.10)),
+    var(--blue-soft);
+  color: var(--blue-strong);
+  box-shadow: inset 2px 0 0 var(--orange);
 }
 
 .schema-icon,

@@ -1,10 +1,5 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-label="NaviHub icon">
   <defs>
-    <linearGradient id="base" x1="18" y1="14" x2="112" y2="118" gradientUnits="userSpaceOnUse">
-      <stop offset="0" stop-color="#ffffff"/>
-      <stop offset="0.58" stop-color="#f7f7f8"/>
-      <stop offset="1" stop-color="#eeeeef"/>
-    </linearGradient>
     <linearGradient id="warm" x1="40" y1="32" x2="90" y2="98" gradientUnits="userSpaceOnUse">
       <stop offset="0" stop-color="#ffb25f"/>
       <stop offset="0.58" stop-color="#f26b3a"/>
@@ -18,8 +13,6 @@
       <feDropShadow dx="0" dy="6" stdDeviation="6" flood-color="#24262d" flood-opacity="0.12"/>
     </filter>
   </defs>
-  <rect x="10" y="10" width="108" height="108" rx="26" fill="url(#base)"/>
-  <rect x="10.75" y="10.75" width="106.5" height="106.5" rx="25.25" fill="none" stroke="#dedfe3" stroke-width="1.5"/>
   <path d="M33 82 L58 39 C60.8 34.2 67.8 34.2 70.7 38.9 L96 82 C99 87.1 95.3 93.5 89.4 93.5 H39.7 C33.8 93.5 30 87.2 33 82Z" fill="url(#warm)" filter="url(#shadow)"/>
   <path d="M45 80 L63.8 48.8 L83 80 H45Z" fill="#fff" opacity="0.20"/>
   <circle cx="64" cy="64" r="11.5" fill="#fff"/>

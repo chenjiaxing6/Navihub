@@ -19,11 +19,13 @@ export function createMysqlConnection(overrides = {}) {
     config,
     status: "disconnected",
     schemas: [],
+    pinnedSchemas: [],
     savedQueries: [],
     ...overrides,
     config,
     meta: overrides.meta ?? formatMysqlMeta(config),
     status: overrides.status ?? "disconnected",
+    pinnedSchemas: normalizePinnedSchemas(overrides.pinnedSchemas),
     savedQueries: normalizeSavedQueries(overrides.savedQueries),
   };
 }
@@ -42,6 +44,7 @@ export function normalizeDatabaseConnection(connection, index = 0) {
     id: connection.id ?? `mysql-${Date.now()}-${index}`,
     name: connection.name ?? "mysql",
     schemas: Array.isArray(connection.schemas) ? connection.schemas : [],
+    pinnedSchemas: normalizePinnedSchemas(connection.pinnedSchemas),
     savedQueries: normalizeSavedQueries(connection.savedQueries),
   });
 }
@@ -69,4 +72,16 @@ export function normalizeSavedQueries(queries) {
       };
     })
     .filter((query) => query.schema);
+}
+
+function normalizePinnedSchemas(schemas) {
+  if (!Array.isArray(schemas)) {
+    return [];
+  }
+
+  return [...new Set(
+    schemas
+      .map((schema) => String(schema ?? "").trim())
+      .filter(Boolean),
+  )];
 }

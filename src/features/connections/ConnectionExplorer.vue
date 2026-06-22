@@ -8,7 +8,7 @@ const props = defineProps({
   connections: { type: Array, required: true },
   folders: { type: Array, default: () => [] },
   activeConnectionId: { type: String, required: true },
-  activeSchemaConnectionId: { type: String, default: null },
+  expandedConnectionIds: { type: Array, default: () => [] },
   activeConnection: { type: Object, default: null },
   openSchemaKeys: { type: Array, default: () => [] },
   searchQuery: { type: String, default: "" },
@@ -24,9 +24,11 @@ const emit = defineEmits([
   "activate-schema",
   "refresh-connection",
   "select-connection",
+  "toggle-connection-expanded",
   "open-connection",
   "create-query",
   "database-object-action",
+  "toggle-schema-pin",
   "open-schema",
   "open-table-query",
   "delete-folder",
@@ -85,13 +87,9 @@ const folderContextItems = computed(() => [
   { key: "delete", label: "删除文件夹", danger: true, divided: true },
 ]);
 const moveFolderDropdownItems = computed(() => [
-  { id: null, name: "未归档" },
+  { id: null, name: "顶层" },
   ...props.folders,
 ]);
-const ungroupedFolder = {
-  id: "__ungrouped",
-  name: "未归档",
-};
 
 const hasVisibleConnections = computed(() => filteredConnectionCount.value > 0);
 const hasVisibleContent = computed(() =>
@@ -109,7 +107,7 @@ const connectionContextItems = computed(() => {
     { key: "create-database", label: "新建库", disabled: connection?.workspace !== "database" || !connected },
     { key: "edit", label: "编辑", divided: true },
     { key: "duplicate", label: "复制连接" },
-    { key: "move:none", label: "移到未归档", disabled: !connection?.folderId, divided: true },
+    { key: "move:none", label: "移到顶层", disabled: !connection?.folderId, divided: true },
     ...props.folders.map((folder) => ({
       key: `move:${folder.id}`,
       label: `移到 ${folder.name}`,
@@ -121,10 +119,21 @@ const connectionContextItems = computed(() => {
 
 function handleConnectionClick(connection) {
   emit("select-connection", connection);
+  if (canToggleConnection(connection)) {
+    emit("toggle-connection-expanded", connection);
+  }
 }
 
 function handleConnectionDoubleClick(connection) {
   emit("open-connection", connection);
+}
+
+function canToggleConnection(connection) {
+  return connection.workspace === "database" && ["connected", "connecting"].includes(connection.status);
+}
+
+function isConnectionExpanded(connection) {
+  return canToggleConnection(connection) && props.expandedConnectionIds.includes(connection.id);
 }
 
 function openConnectionContextMenu(event, connection) {
@@ -248,6 +257,28 @@ function groupType(group) {
 function itemName(item) {
   return typeof item === "string" ? item : item?.name;
 }
+
+function schemasForConnection(connection) {
+  const schemas = connection.id === props.activeConnection?.id
+    ? props.activeConnection.schemas
+    : connection.schemas;
+  const pinnedOrder = new Map((connection.pinnedSchemas ?? []).map((schemaName, index) => [schemaName, index]));
+  return (schemas ?? []).slice().sort((first, second) => {
+    const firstPinnedIndex = pinnedOrder.get(first.name);
+    const secondPinnedIndex = pinnedOrder.get(second.name);
+    const firstPinned = firstPinnedIndex !== undefined;
+    const secondPinned = secondPinnedIndex !== undefined;
+    if (firstPinned && secondPinned) {
+      return firstPinnedIndex - secondPinnedIndex;
+    }
+
+    if (firstPinned !== secondPinned) {
+      return firstPinned ? -1 : 1;
+    }
+
+    return 0;
+  });
+}
 </script>
 
 <template>
@@ -278,6 +309,15 @@ function itemName(item) {
                 @contextmenu.prevent="openConnectionContextMenu($event, connection)"
                 @dblclick.stop="handleConnectionDoubleClick(connection)"
               >
+                <span class="connection-expand-slot">
+                  <button
+                    v-if="canToggleConnection(connection)"
+                    class="connection-expand-toggle"
+                    :class="{ open: isConnectionExpanded(connection) }"
+                    :aria-label="isConnectionExpanded(connection) ? '折叠连接' : '展开连接'"
+                    @click.stop="emit('toggle-connection-expanded', connection)"
+                  />
+                </span>
                 <span class="node-icon" :class="connection.iconClass">
                   <el-icon v-if="connection.workspace === 'ssh'"><TerminalIcon /></el-icon>
                   <svg
@@ -304,7 +344,11 @@ function itemName(item) {
                     <span class="state-dot" />
                     {{ statusText[connection.status] ?? "未连接" }}
                   </em>
-                  <el-dropdown trigger="click" @command="(command) => handleDropdownCommand(command, connection)">
+                  <el-dropdown
+                    trigger="click"
+                    popper-class="connection-actions-popper"
+                    @command="(command) => handleDropdownCommand(command, connection)"
+                  >
                     <button class="connection-menu" @click.stop>⋯</button>
                     <template #dropdown>
                       <el-dropdown-menu>
@@ -328,18 +372,20 @@ function itemName(item) {
             </div>
 
             <SchemaTree
-              v-if="connection.workspace === 'database' && ['connected', 'connecting'].includes(connection.status) && activeSchemaConnectionId === connection.id"
+              v-if="isConnectionExpanded(connection)"
               :connection-id="connection.id"
               :loading="connection.status === 'connecting'"
               :open-schema-keys="openSchemaKeys"
+              :pinned-schemas="connection.pinnedSchemas"
               :search-query="searchQuery"
               :schema-open-versions="schemaOpenVersions"
-              :schemas="connection.id === activeConnection?.id ? activeConnection.schemas : connection.schemas"
+              :schemas="schemasForConnection(connection)"
               @activate-schema="(payload) => emit('activate-schema', { connection, ...payload })"
               @create-query="(payload) => emit('create-query', { connection, ...payload })"
               @database-object-action="(payload) => emit('database-object-action', { connection, ...payload })"
               @open-schema="(payload) => emit('open-schema', { connection, ...payload })"
               @open-table-query="(payload) => emit('open-table-query', { connection, ...payload })"
+              @toggle-schema-pin="(payload) => emit('toggle-schema-pin', { connection, ...payload })"
             />
           </template>
           <div v-if="folder.connections.length === 0" class="folder-empty">空文件夹</div>
@@ -347,14 +393,7 @@ function itemName(item) {
       </section>
     </template>
 
-    <section v-if="groupedConnections.uncategorized.length > 0 || (!normalizedSearch && props.folders.length > 0)" class="connection-folder">
-      <button class="folder-row open static" type="button">
-        <el-icon><FolderOpened /></el-icon>
-        <span>{{ ungroupedFolder.name }}</span>
-        <em>{{ groupedConnections.uncategorized.length }}</em>
-      </button>
-      <div class="folder-children">
-        <template v-for="connection in groupedConnections.uncategorized" :key="connection.id">
+    <template v-for="connection in groupedConnections.uncategorized" :key="connection.id">
       <div class="connection-row">
         <button
           class="connection-item"
@@ -363,6 +402,15 @@ function itemName(item) {
           @contextmenu.prevent="openConnectionContextMenu($event, connection)"
           @dblclick.stop="handleConnectionDoubleClick(connection)"
         >
+          <span class="connection-expand-slot">
+            <button
+              v-if="canToggleConnection(connection)"
+              class="connection-expand-toggle"
+              :class="{ open: isConnectionExpanded(connection) }"
+              :aria-label="isConnectionExpanded(connection) ? '折叠连接' : '展开连接'"
+              @click.stop="emit('toggle-connection-expanded', connection)"
+            />
+          </span>
           <span class="node-icon" :class="connection.iconClass">
             <el-icon v-if="connection.workspace === 'ssh'"><TerminalIcon /></el-icon>
             <svg
@@ -389,46 +437,50 @@ function itemName(item) {
               <span class="state-dot" />
               {{ statusText[connection.status] ?? "未连接" }}
             </em>
-          <el-dropdown trigger="click" @command="(command) => handleDropdownCommand(command, connection)">
-            <button class="connection-menu" @click.stop>⋯</button>
-            <template #dropdown>
-              <el-dropdown-menu>
-                <el-dropdown-item command="open-connection">连接</el-dropdown-item>
-                <el-dropdown-item command="edit-connection">编辑</el-dropdown-item>
-                <el-dropdown-item command="duplicate-connection">复制连接</el-dropdown-item>
-                <el-dropdown-item
-                  v-for="targetFolder in moveFolderDropdownItems"
-                  :key="targetFolder.id ?? 'none'"
-                  :command="`move:${targetFolder.id ?? ''}`"
-                  divided
-                >
-                  移到 {{ targetFolder.name }}
-                </el-dropdown-item>
-                <el-dropdown-item command="delete-connection" divided>删除连接</el-dropdown-item>
-              </el-dropdown-menu>
-            </template>
+            <el-dropdown
+              trigger="click"
+              popper-class="connection-actions-popper"
+              @command="(command) => handleDropdownCommand(command, connection)"
+            >
+              <button class="connection-menu" @click.stop>⋯</button>
+              <template #dropdown>
+                <el-dropdown-menu>
+                  <el-dropdown-item command="open-connection">连接</el-dropdown-item>
+                  <el-dropdown-item command="edit-connection">编辑</el-dropdown-item>
+                  <el-dropdown-item command="duplicate-connection">复制连接</el-dropdown-item>
+                  <el-dropdown-item
+                    v-for="targetFolder in moveFolderDropdownItems"
+                    :key="targetFolder.id ?? 'none'"
+                    :command="`move:${targetFolder.id ?? ''}`"
+                    divided
+                  >
+                    移到 {{ targetFolder.name }}
+                  </el-dropdown-item>
+                  <el-dropdown-item command="delete-connection" divided>删除连接</el-dropdown-item>
+                </el-dropdown-menu>
+              </template>
             </el-dropdown>
           </span>
         </button>
       </div>
 
       <SchemaTree
-        v-if="connection.workspace === 'database' && ['connected', 'connecting'].includes(connection.status) && activeSchemaConnectionId === connection.id"
+        v-if="isConnectionExpanded(connection)"
         :connection-id="connection.id"
         :loading="connection.status === 'connecting'"
         :open-schema-keys="openSchemaKeys"
+        :pinned-schemas="connection.pinnedSchemas"
         :search-query="searchQuery"
         :schema-open-versions="schemaOpenVersions"
-        :schemas="connection.id === activeConnection?.id ? activeConnection.schemas : connection.schemas"
+        :schemas="schemasForConnection(connection)"
         @activate-schema="(payload) => emit('activate-schema', { connection, ...payload })"
         @create-query="(payload) => emit('create-query', { connection, ...payload })"
         @database-object-action="(payload) => emit('database-object-action', { connection, ...payload })"
         @open-schema="(payload) => emit('open-schema', { connection, ...payload })"
         @open-table-query="(payload) => emit('open-table-query', { connection, ...payload })"
+        @toggle-schema-pin="(payload) => emit('toggle-schema-pin', { connection, ...payload })"
       />
-      </template>
-      </div>
-    </section>
+    </template>
 
     <div v-if="!hasVisibleContent || !hasVisibleConnections" class="connection-empty">
       没有匹配的连接
@@ -497,15 +549,6 @@ function itemName(item) {
   color: var(--text);
 }
 
-.folder-row.static {
-  cursor: default;
-}
-
-.folder-row.static:hover {
-  background: transparent;
-  color: var(--muted);
-}
-
 .folder-row span {
   min-width: 0;
   overflow: hidden;
@@ -534,8 +577,8 @@ function itemName(item) {
 
 .connection-item {
   display: grid;
-  grid-template-columns: 22px 1fr auto;
-  gap: 8px;
+  grid-template-columns: 16px 22px 1fr auto;
+  gap: 6px;
   align-items: center;
   width: 100%;
   min-height: 44px;
@@ -546,6 +589,46 @@ function itemName(item) {
   color: var(--text);
   cursor: pointer;
   text-align: left;
+}
+
+.connection-expand-slot {
+  display: grid;
+  place-items: center;
+  width: 16px;
+  height: 100%;
+}
+
+.connection-expand-toggle {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 16px;
+  height: 16px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--faint);
+  cursor: pointer;
+  appearance: none;
+}
+
+.connection-expand-toggle:hover {
+  background: var(--surface-strong);
+  color: var(--muted);
+}
+
+.connection-expand-toggle::before {
+  width: 0;
+  height: 0;
+  border-top: 4px solid transparent;
+  border-bottom: 4px solid transparent;
+  border-left: 5px solid currentColor;
+  content: "";
+  transition: transform 0.12s ease;
+}
+
+.connection-expand-toggle.open::before {
+  transform: rotate(90deg);
 }
 
 .connection-item .node-icon.mysql,
@@ -618,6 +701,59 @@ function itemName(item) {
 .connection-menu:active {
   background: #e8e9ec;
   transform: none;
+}
+
+:global(.connection-actions-popper.el-popper) {
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.98);
+  box-shadow: 0 12px 28px rgba(24, 27, 35, 0.12), 0 2px 6px rgba(24, 27, 35, 0.06);
+  backdrop-filter: saturate(160%) blur(14px);
+}
+
+:global(.connection-actions-popper .el-dropdown-menu) {
+  min-width: 154px;
+  padding: 4px;
+  border-radius: 8px;
+}
+
+:global(.connection-actions-popper .el-dropdown-menu__item) {
+  min-height: 28px;
+  padding: 0 10px;
+  border-radius: 6px;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 28px;
+}
+
+:global(.connection-actions-popper .el-dropdown-menu__item:not(.is-disabled):focus),
+:global(.connection-actions-popper .el-dropdown-menu__item:not(.is-disabled):hover) {
+  background: var(--surface-strong);
+  color: var(--text);
+}
+
+:global(.connection-actions-popper .el-dropdown-menu__item--divided) {
+  margin-top: 4px;
+  border-top: 1px solid var(--line);
+}
+
+:global(.connection-actions-popper .el-dropdown-menu__item--divided::before) {
+  display: none;
+}
+
+:global(.connection-actions-popper .el-dropdown-menu__item.is-disabled) {
+  color: var(--faint);
+}
+
+:global(.connection-actions-popper .el-dropdown-menu__item:last-child:not(.is-disabled)) {
+  color: var(--red);
+}
+
+:global(.connection-actions-popper .el-dropdown-menu__item:last-child:not(.is-disabled):hover),
+:global(.connection-actions-popper .el-dropdown-menu__item:last-child:not(.is-disabled):focus) {
+  background: #fef2f2;
+  color: var(--red);
 }
 
 .connection-item:hover {

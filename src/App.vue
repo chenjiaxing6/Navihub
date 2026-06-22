@@ -40,6 +40,7 @@ const editingConnection = ref(null);
 const pendingDatabaseCreatePayload = ref(null);
 const pendingConnectionFolderId = ref(null);
 const dynamicTabs = ref([]);
+const expandedConnectionIds = ref([]);
 const activeTopTabIds = ref({
   database: null,
 });
@@ -110,6 +111,32 @@ function updateConnectionSchemas(connectionId, schemas) {
   );
 }
 
+function toggleSchemaPin(payload) {
+  const schemaName = String(payload?.schema?.name ?? "").trim();
+  const connectionId = payload?.connection?.id;
+  if (!connectionId || !schemaName) {
+    return;
+  }
+
+  let pinned = false;
+  connectionList.value = connectionList.value.map((connection) => {
+    if (connection.id !== connectionId) {
+      return connection;
+    }
+
+    const pinnedSchemas = Array.isArray(connection.pinnedSchemas) ? connection.pinnedSchemas : [];
+    pinned = !pinnedSchemas.includes(schemaName);
+    const nextPinnedSchemas = pinned
+      ? [...pinnedSchemas, schemaName]
+      : pinnedSchemas.filter((item) => item !== schemaName);
+    return {
+      ...connection,
+      pinnedSchemas: nextPinnedSchemas,
+    };
+  });
+  ElMessage.success(pinned ? "数据库已置顶" : "数据库已取消置顶");
+}
+
 function setWorkspaceActiveTopTabId(workspace, tabId) {
   activeTopTabIds.value = {
     ...activeTopTabIds.value,
@@ -138,6 +165,30 @@ function selectConnection(connection) {
   setWorkspaceActiveConnectionId(connection.workspace, connection.id);
 }
 
+function expandConnection(connectionId) {
+  if (!connectionId || expandedConnectionIds.value.includes(connectionId)) {
+    return;
+  }
+
+  expandedConnectionIds.value = [...expandedConnectionIds.value, connectionId];
+}
+
+function collapseConnection(connectionId) {
+  expandedConnectionIds.value = expandedConnectionIds.value.filter((id) => id !== connectionId);
+}
+
+function toggleConnectionExpanded(connection) {
+  if (!connection || connection.workspace !== "database" || !["connected", "connecting"].includes(connection.status)) {
+    return;
+  }
+
+  if (expandedConnectionIds.value.includes(connection.id)) {
+    collapseConnection(connection.id);
+  } else {
+    expandConnection(connection.id);
+  }
+}
+
 async function openConnection(connection) {
   selectConnection(connection);
 
@@ -155,6 +206,7 @@ async function openConnection(connection) {
     item.id === connection.id ? { ...item, status: "connecting" } : item,
   );
   activeSchemaConnectionId.value = connection.id;
+  expandConnection(connection.id);
   openSchemaKeys.value = openSchemaKeys.value.filter((key) => !key.startsWith(`schema:${connection.id}:`));
 
   try {
@@ -165,6 +217,7 @@ async function openConnection(connection) {
       item.id === connection.id ? { ...item, status: "disconnected" } : item,
     );
     activeSchemaConnectionId.value = activeSchemaConnectionId.value === connection.id ? null : activeSchemaConnectionId.value;
+    collapseConnection(connection.id);
     ElMessage.error(`连接失败：${error}`);
   }
 }
@@ -189,6 +242,7 @@ function closeConnection(connection) {
     item.id === connection.id ? { ...item, status: "disconnected" } : item,
   );
   activeSchemaConnectionId.value = activeSchemaConnectionId.value === connection.id ? null : activeSchemaConnectionId.value;
+  collapseConnection(connection.id);
   openSchemaKeys.value = openSchemaKeys.value.filter((key) => !key.startsWith(`schema:${connection.id}:`));
   closeConnectionTabs(connection.id);
 }
@@ -201,7 +255,8 @@ async function refreshConnection(connection) {
   try {
     const schemas = await loadMysqlSchema(connection.config);
     updateConnectionSchemas(connection.id, schemas);
-    const savedQueries = connectionList.value.find((item) => item.id === connection.id)?.savedQueries ?? connection.savedQueries;
+    const latestConnection = connectionList.value.find((item) => item.id === connection.id) ?? connection;
+    const savedQueries = latestConnection.savedQueries ?? connection.savedQueries;
     const mergedSchemas = mergeSavedQueriesIntoSchemas(schemas, savedQueries);
     dynamicTabs.value = dynamicTabs.value.map((tab) => {
       if (tab.connectionId !== connection.id || tab.kind !== "schema") {
@@ -214,6 +269,7 @@ async function refreshConnection(connection) {
     activeWorkspace.value = "database";
     setWorkspaceActiveConnectionId("database", connection.id);
     activeSchemaConnectionId.value = connection.id;
+    expandConnection(connection.id);
     const nextSchemaOpenVersions = { ...schemaOpenVersions.value };
     for (const key of openSchemaKeys.value.filter((item) => item.startsWith(`schema:${connection.id}:`))) {
       nextSchemaOpenVersions[key] = (nextSchemaOpenVersions[key] ?? 0) + 1;
@@ -256,6 +312,7 @@ function handleSchemaLoaded(payload) {
   activeWorkspace.value = "database";
   setWorkspaceActiveConnectionId("database", payload.connectionId);
   activeSchemaConnectionId.value = payload.connectionId;
+  expandConnection(payload.connectionId);
   connectionList.value = connectionList.value.map((connection) =>
     connection.id === payload.connectionId ? { ...connection, status: "connected" } : connection,
   );
@@ -350,7 +407,7 @@ async function deleteConnectionFolder(folder) {
   }
 
   await ElMessageBox.confirm(
-    `删除“${folder.name}”后，里面的连接会移到未归档。`,
+    `删除“${folder.name}”后，里面的连接会移到顶层。`,
     "删除文件夹",
     {
       confirmButtonText: "删除",
@@ -440,6 +497,7 @@ async function deleteConnection(connection) {
   const next = connectionList.value.find((item) => item.workspace === connection.workspace);
   setWorkspaceActiveConnectionId(connection.workspace, next?.id ?? "");
   activeSchemaConnectionId.value = activeSchemaConnectionId.value === connection.id ? null : activeSchemaConnectionId.value;
+  collapseConnection(connection.id);
   closeConnectionTabs(connection.id);
 }
 
@@ -457,11 +515,13 @@ function duplicateConnection(connection) {
   connectionList.value = [...connectionList.value, duplicate];
   setWorkspaceActiveConnectionId(duplicate.workspace, duplicate.id);
   activeSchemaConnectionId.value = null;
+  collapseConnection(duplicate.id);
 }
 
 function openTableQuery(payload) {
   selectConnection(payload.connection);
   activeSchemaConnectionId.value = payload.connection.id;
+  expandConnection(payload.connection.id);
   if (payload.groupType === "query") {
     openSavedQuery(payload);
     return;
@@ -498,6 +558,7 @@ function openTableQuery(payload) {
 function createQuery(payload) {
   selectConnection(payload.connection);
   activeSchemaConnectionId.value = payload.connection.id;
+  expandConnection(payload.connection.id);
   const schemaName = payload.schema?.name ?? payload.schema;
   const createdAt = Date.now();
   const tab = {
@@ -517,6 +578,9 @@ function createQuery(payload) {
 }
 
 function openSavedQuery(payload) {
+  selectConnection(payload.connection);
+  activeSchemaConnectionId.value = payload.connection.id;
+  expandConnection(payload.connection.id);
   const schemaName = payload.schema?.name ?? payload.schema;
   const query = typeof payload.item === "object"
     ? payload.item
@@ -556,6 +620,7 @@ function openTableDesigner(payload) {
 
   selectConnection(payload.connection);
   activeSchemaConnectionId.value = payload.connection.id;
+  expandConnection(payload.connection.id);
   const schemaName = payload.schema?.name ?? payload.schema;
   const tableName = payload.table?.name ?? payload.table ?? "";
   const mode = payload.mode ?? (tableName ? "edit" : "create");
@@ -641,6 +706,7 @@ function saveQuery(payload) {
 function openSchema(payload) {
   selectConnection(payload.connection);
   activeSchemaConnectionId.value = payload.connection.id;
+  expandConnection(payload.connection.id);
   const tabKey = `schema:${payload.connection.id}:${payload.schema.name}`;
   const isOpen = openSchemaKeys.value.includes(tabKey);
   const existing = dynamicTabs.value.find((tab) => tab.key === tabKey);
@@ -695,6 +761,7 @@ function activateSchema(payload) {
   if (existing) {
     selectConnection(payload.connection);
     activeSchemaConnectionId.value = payload.connection.id;
+    expandConnection(payload.connection.id);
     setWorkspaceActiveTopTabId("database", existing.id);
   }
 }
@@ -725,6 +792,7 @@ function closeConnectionTabs(connectionId) {
 
   dynamicTabs.value = dynamicTabs.value.filter((tab) => !closingIds.has(tab.id));
   openSchemaKeys.value = openSchemaKeys.value.filter((key) => !key.startsWith(`schema:${connectionId}:`));
+  collapseConnection(connectionId);
 
   for (const workspace of Object.keys(activeTopTabIds.value)) {
     if (closingIds.has(activeTopTabIds.value[workspace])) {
@@ -915,6 +983,7 @@ async function handleCreateDatabaseSubmit(form) {
       v-model:active-workspace="activeWorkspace"
       :active-connection-id="activeConnectionId"
       :active-schema-connection-id="activeSchemaConnectionId"
+      :expanded-connection-ids="expandedConnectionIds"
       :active-connection="activeConnection"
       :database-connection="databaseConnection"
       :ssh-connection="sshConnection"
@@ -954,6 +1023,8 @@ async function handleCreateDatabaseSubmit(form) {
       @select-top-tab="selectTopTab"
       @schema-loaded="handleSchemaLoaded"
       @table-design-saved="handleTableDesignSaved"
+      @toggle-connection-expanded="toggleConnectionExpanded"
+      @toggle-schema-pin="toggleSchemaPin"
       @update-mysql-connection="updateMysqlConnection"
       @update-query-schema="updateQuerySchema"
       @update-ssh-state="updateSshState"

@@ -11,6 +11,7 @@ const activeWorkspace = defineModel("activeWorkspace", { type: String, required:
 const props = defineProps({
   activeConnectionId: { type: String, required: true },
   activeSchemaConnectionId: { type: String, default: null },
+  expandedConnectionIds: { type: Array, default: () => [] },
   activeConnection: { type: Object, default: null },
   databaseConnection: { type: Object, default: null },
   sshConnection: { type: Object, default: null },
@@ -47,6 +48,8 @@ const emit = defineEmits([
   "refresh-connection",
   "rename-connection-folder",
   "table-design-saved",
+  "toggle-schema-pin",
+  "toggle-connection-expanded",
   "move-connection-to-folder",
   "update-mysql-connection",
   "schema-loaded",
@@ -161,7 +164,7 @@ function stopSidebarResize() {
         :connections="props.visibleConnections"
         :folders="props.visibleConnectionFolders"
         :active-connection-id="props.activeConnectionId"
-        :active-schema-connection-id="props.activeSchemaConnectionId"
+        :expanded-connection-ids="props.expandedConnectionIds"
         :active-connection="props.activeConnection"
         :open-schema-keys="props.openSchemaKeys"
         :search-query="searchQuery"
@@ -181,6 +184,8 @@ function stopSidebarResize() {
         @refresh-connection="emit('refresh-connection', $event)"
         @rename-folder="emit('rename-connection-folder', $event)"
         @select-connection="emit('select-connection', $event)"
+        @toggle-connection-expanded="emit('toggle-connection-expanded', $event)"
+        @toggle-schema-pin="emit('toggle-schema-pin', $event)"
         @open-connection="emit('open-connection', $event)"
       />
       <div

@@ -101,6 +101,7 @@ onBeforeUnmount(() => {
           'context-menu__item--danger': item.danger,
           'context-menu__item--divided': item.divided,
           'context-menu__item--submenu': item.children?.length,
+          'context-menu__item--submenu-disabled': item.disabled && item.children?.length,
         }"
         :disabled="item.disabled"
         role="menuitem"
@@ -169,7 +170,7 @@ onBeforeUnmount(() => {
   display: none;
   position: absolute;
   top: -5px;
-  left: calc(100% + 4px);
+  left: 100%;
   min-width: 214px;
   padding: 5px;
   border: 1px solid var(--line);
@@ -178,9 +179,23 @@ onBeforeUnmount(() => {
   box-shadow: 0 8px 24px rgba(24, 27, 35, 0.10);
 }
 
+.context-menu__item--submenu::after {
+  position: absolute;
+  top: -8px;
+  right: -14px;
+  bottom: -8px;
+  width: 18px;
+  content: "";
+}
+
 .context-menu__item--submenu:hover .context-menu__submenu,
 .context-menu__item--submenu:focus-within .context-menu__submenu {
   display: block;
+}
+
+.context-menu__item--submenu-disabled:hover .context-menu__submenu,
+.context-menu__item--submenu-disabled:focus-within .context-menu__submenu {
+  display: none;
 }
 
 .context-menu__item--divided {

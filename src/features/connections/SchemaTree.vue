@@ -5,13 +5,14 @@ import ContextMenu from "../../shared/ContextMenu.vue";
 const props = defineProps({
   connectionId: { type: String, required: true },
   openSchemaKeys: { type: Array, default: () => [] },
+  pinnedSchemas: { type: Array, default: () => [] },
   searchQuery: { type: String, default: "" },
   schemaOpenVersions: { type: Object, default: () => ({}) },
   schemas: { type: Array, required: true },
   loading: { type: Boolean, default: false },
 });
 
-const emit = defineEmits(["activate-schema", "create-query", "open-schema", "open-table-query", "database-object-action"]);
+const emit = defineEmits(["activate-schema", "create-query", "open-schema", "open-table-query", "database-object-action", "toggle-schema-pin"]);
 const selectedKey = ref("");
 const selectedTableKeys = ref(new Set());
 const tableSelectionAnchor = ref(null);
@@ -27,13 +28,14 @@ const groupContextPosition = ref({ x: 0, y: 0 });
 const contextGroup = ref(null);
 const normalizedSearch = computed(() => props.searchQuery.trim().toLowerCase());
 const hasSearch = computed(() => Boolean(normalizedSearch.value));
+const pinnedSchemaSet = computed(() => new Set(props.pinnedSchemas ?? []));
 const filteredSchemas = computed(() => {
   if (!hasSearch.value) {
-    return props.schemas;
+    return sortSchemas(props.schemas);
   }
 
   const query = normalizedSearch.value;
-  return props.schemas
+  return sortSchemas(props.schemas
     .map((schema) => {
       const schemaMatched = includesQuery(schema.name, query);
       const groups = (schema.groups ?? [])
@@ -46,8 +48,39 @@ const filteredSchemas = computed(() => {
 
       return schemaMatched || groups.length > 0 ? { ...schema, groups } : null;
     })
-    .filter(Boolean);
+    .filter(Boolean));
 });
+const schemaContextItems = computed(() => [
+  {
+    key: "toggle-pin",
+    label: contextSchema.value && isSchemaPinned(contextSchema.value) ? "取消置顶" : "置顶",
+  },
+  { key: "create-query", label: "新建查询", divided: true },
+  { key: "create-database", label: "新建库", divided: true },
+  { key: "create-table", label: "新建表" },
+  { key: "import-sql", label: "导入 SQL", divided: true },
+  { key: "export-database-sql", label: "导出库为 SQL" },
+  { key: "drop-database", label: "删除库", danger: true, divided: true },
+]);
+
+function sortSchemas(schemas) {
+  const pinnedOrder = new Map((props.pinnedSchemas ?? []).map((schemaName, index) => [schemaName, index]));
+  return (schemas ?? []).slice().sort((first, second) => {
+    const firstPinnedIndex = pinnedOrder.get(first.name);
+    const secondPinnedIndex = pinnedOrder.get(second.name);
+    const firstPinned = firstPinnedIndex !== undefined;
+    const secondPinned = secondPinnedIndex !== undefined;
+    if (firstPinned && secondPinned) {
+      return firstPinnedIndex - secondPinnedIndex;
+    }
+
+    if (firstPinned !== secondPinned) {
+      return firstPinned ? -1 : 1;
+    }
+
+    return 0;
+  });
+}
 
 watch(
   () => props.openSchemaKeys,
@@ -90,6 +123,10 @@ function isSchemaOpen(schema) {
   }
 
   return props.openSchemaKeys?.includes(schemaKey(schema));
+}
+
+function isSchemaPinned(schema) {
+  return pinnedSchemaSet.value.has(schema.name);
 }
 
 function schemaRenderKey(schema) {
@@ -241,6 +278,8 @@ function handleSchemaContextSelect(item) {
 
   if (item.key === "create-query") {
     emit("create-query", { schema: contextSchema.value });
+  } else if (item.key === "toggle-pin") {
+    emit("toggle-schema-pin", { schema: contextSchema.value });
   } else {
     emit("database-object-action", { action: item.key, schema: contextSchema.value });
   }
@@ -303,18 +342,22 @@ function includesQuery(value, query) {
           selectOnly(schemaKey(schema));
           if (isSchemaOpen(schema)) emit('activate-schema', { schema });
         }"
-        @dblclick.prevent="emit('open-schema', { schema })"
+        @dblclick.stop.prevent="emit('open-schema', { schema })"
         @contextmenu.prevent="openSchemaContextMenu($event, schema)"
       >
         <span class="schema-icon" />
-        <span>{{ schema.name }}</span>
+        <span class="schema-name">{{ schema.name }}</span>
+        <span v-if="isSchemaPinned(schema)" class="pin-indicator" aria-label="已置顶" title="已置顶">
+          <span class="pin-indicator__icon" aria-hidden="true" />
+          <span>置顶</span>
+        </span>
       </summary>
 
       <details v-for="group in schema.groups" :key="groupType(group)" :open="isGroupOpen(schema, group)">
         <summary
           :class="{ selected: selectedKey === groupKey(schema, group) }"
           @click.prevent="selectOnly(groupKey(schema, group))"
-          @dblclick.prevent="toggleGroup(schema, group)"
+          @dblclick.stop.prevent="toggleGroup(schema, group)"
           @contextmenu.prevent="openGroupContextMenu($event, schema, group)"
         >
           <button
@@ -336,7 +379,7 @@ function includesQuery(value, query) {
             'multi-selected': groupType(group) === 'table' && isTableSelected(schema, group, item),
           }"
           @click.prevent="selectTable($event, schema, group, item)"
-          @dblclick="emit('open-table-query', { schema: schema.name, groupType: groupType(group), item: groupType(group) === 'query' ? item : itemName(item) })"
+          @dblclick.stop="emit('open-table-query', { schema: schema.name, groupType: groupType(group), item: groupType(group) === 'query' ? item : itemName(item) })"
           @contextmenu.prevent="openObjectContextMenu($event, schema, group, item)"
         >
           <span class="object-icon" :class="itemIconClass[groupType(group)] ?? 'object-icon-default'" />
@@ -347,14 +390,7 @@ function includesQuery(value, query) {
 
     <ContextMenu
       v-model="schemaContextOpen"
-      :items="[
-        { key: 'create-query', label: '新建查询' },
-        { key: 'create-database', label: '新建库', divided: true },
-        { key: 'create-table', label: '新建表' },
-        { key: 'import-sql', label: '导入 SQL', divided: true },
-        { key: 'export-database-sql', label: '导出库为 SQL' },
-        { key: 'drop-database', label: '删除库', danger: true, divided: true },
-      ]"
+      :items="schemaContextItems"
       :x="schemaContextPosition.x"
       :y="schemaContextPosition.y"
       @select="handleSchemaContextSelect"
@@ -393,6 +429,7 @@ function includesQuery(value, query) {
   margin: 2px 0 6px 30px;
   padding: 0 0 4px 8px;
   border-left: 1px solid var(--line);
+  user-select: none;
 }
 
 .schema-empty {
@@ -425,6 +462,8 @@ summary {
   cursor: pointer;
   font-size: 13px;
   list-style: none;
+  -webkit-user-select: none;
+  user-select: none;
 }
 
 summary:hover {
@@ -452,6 +491,56 @@ summary em {
   color: var(--faint);
   font-size: 11px;
   font-style: normal;
+}
+
+.pin-indicator {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  min-width: 0;
+  height: 16px;
+  flex: 0 0 auto;
+  margin-left: auto;
+  padding: 0 4px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: var(--surface-strong);
+  color: var(--faint);
+  font-size: 10px;
+  font-weight: 680;
+  line-height: 1;
+}
+
+.pin-indicator__icon {
+  position: relative;
+  width: 9px;
+  height: 9px;
+  flex: 0 0 9px;
+  opacity: 0.85;
+}
+
+.pin-indicator__icon::before {
+  position: absolute;
+  top: 0;
+  left: 3px;
+  width: 4px;
+  height: 7px;
+  border-radius: 2px 2px 1px 1px;
+  background: currentColor;
+  content: "";
+  transform: rotate(45deg);
+}
+
+.pin-indicator__icon::after {
+  position: absolute;
+  top: 5px;
+  left: 4px;
+  width: 1px;
+  height: 5px;
+  background: currentColor;
+  content: "";
+  transform: rotate(45deg);
+  transform-origin: top;
 }
 
 .tree-toggle {
@@ -497,6 +586,8 @@ summary em {
   cursor: pointer;
   font-size: 13px;
   text-align: left;
+  -webkit-user-select: none;
+  user-select: none;
 }
 
 .tree-item:hover {

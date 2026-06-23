@@ -1,5 +1,7 @@
 export function createMysqlConnection(overrides = {}) {
   const now = Date.now();
+  const id = overrides.id ?? `mysql-${now}`;
+  const name = overrides.name ?? "new-mysql";
   const config = {
     host: "127.0.0.1",
     port: 3306,
@@ -10,9 +12,9 @@ export function createMysqlConnection(overrides = {}) {
   };
 
   return {
-    id: `mysql-${now}`,
+    id,
     workspace: "database",
-    name: "new-mysql",
+    name,
     meta: formatMysqlMeta(config),
     iconClass: "mysql",
     iconText: "M",
@@ -22,9 +24,13 @@ export function createMysqlConnection(overrides = {}) {
     pinnedSchemas: [],
     savedQueries: [],
     ...overrides,
+    id,
+    workspace: "database",
+    name,
     config,
     meta: overrides.meta ?? formatMysqlMeta(config),
     status: overrides.status ?? "disconnected",
+    schemas: Array.isArray(overrides.schemas) ? overrides.schemas : [],
     pinnedSchemas: normalizePinnedSchemas(overrides.pinnedSchemas),
     savedQueries: normalizeSavedQueries(overrides.savedQueries),
   };

@@ -343,6 +343,7 @@ function createConnection(payload) {
   activeSchemaConnectionId.value = null;
   pendingConnectionFolderId.value = null;
   connectionDialogVisible.value = false;
+  ElMessage.success(connection.workspace === "ssh" ? "主机已保存" : "连接已保存");
 }
 
 async function createConnectionFolder(workspace = activeWorkspace.value) {

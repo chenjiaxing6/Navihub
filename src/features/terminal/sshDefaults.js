@@ -1,5 +1,7 @@
 export function createSshConnection(overrides = {}) {
   const now = Date.now();
+  const id = overrides.id ?? `ssh-${now}`;
+  const name = overrides.name ?? "new-host";
   const config = {
     host: "127.0.0.1",
     port: 22,
@@ -11,9 +13,9 @@ export function createSshConnection(overrides = {}) {
   };
 
   return {
-    id: `ssh-${now}`,
+    id,
     workspace: "ssh",
-    name: "new-host",
+    name,
     meta: formatSshMeta(config),
     iconClass: "ssh",
     iconText: "S",
@@ -21,6 +23,9 @@ export function createSshConnection(overrides = {}) {
     status: "disconnected",
     connectVersion: 0,
     ...overrides,
+    id,
+    workspace: "ssh",
+    name,
     config,
     meta: overrides.meta ?? formatSshMeta(config),
     status: overrides.status ?? "disconnected",

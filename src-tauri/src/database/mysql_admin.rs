@@ -281,6 +281,34 @@ pub fn mysql_create_database(
 }
 
 #[tauri::command]
+pub fn mysql_alter_database_options(
+    state: State<'_, MysqlState>,
+    config: MysqlConnectionConfig,
+    database: String,
+    charset: Option<String>,
+    collation: Option<String>,
+) -> Result<(), String> {
+    let pool = pool(&state, &config, None)?;
+    let mut conn = pool.get_conn().map_err(|error| error.to_string())?;
+    let charset = validate_option_identifier(charset.as_deref().unwrap_or(""), "字符集")?;
+    let collation = validate_option_identifier(collation.as_deref().unwrap_or(""), "排序规则")?;
+
+    if charset.is_empty() && collation.is_empty() {
+        return Err("请选择字符集或排序规则".to_string());
+    }
+
+    let mut sql = format!("ALTER DATABASE {}", quote_identifier(&database)?);
+    if !charset.is_empty() {
+        sql.push_str(&format!(" DEFAULT CHARACTER SET {charset}"));
+    }
+    if !collation.is_empty() {
+        sql.push_str(&format!(" COLLATE {collation}"));
+    }
+
+    conn.query_drop(sql).map_err(|error| error.to_string())
+}
+
+#[tauri::command]
 pub fn mysql_list_database_options(
     state: State<'_, MysqlState>,
     config: MysqlConnectionConfig,

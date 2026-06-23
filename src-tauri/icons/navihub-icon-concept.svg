@@ -1,0 +1,71 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-label="NaviHub icon concept">
+  <defs>
+    <linearGradient id="tile" x1="28" y1="10" x2="100" y2="118" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#fffaf5"/>
+      <stop offset="0.42" stop-color="#f8f9fc"/>
+      <stop offset="1" stop-color="#e8f1ff"/>
+    </linearGradient>
+    <radialGradient id="tile-glow" cx="0" cy="0" r="1" gradientTransform="matrix(60 68 -68 60 35 24)" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#ffffff" stop-opacity="0.92"/>
+      <stop offset="0.62" stop-color="#ffffff" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="warm" x1="35" y1="31" x2="89" y2="97" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#ffbc70"/>
+      <stop offset="0.55" stop-color="#f26b3a"/>
+      <stop offset="1" stop-color="#d94730"/>
+    </linearGradient>
+    <linearGradient id="blue" x1="44" y1="36" x2="92" y2="91" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#60a5fa"/>
+      <stop offset="1" stop-color="#2563eb"/>
+    </linearGradient>
+    <filter id="tile-shadow" x="-18%" y="-14%" width="136%" height="146%">
+      <feDropShadow dx="0" dy="10" stdDeviation="10" flood-color="#1f2937" flood-opacity="0.16"/>
+    </filter>
+    <filter id="mark-shadow" x="-24%" y="-24%" width="148%" height="158%">
+      <feDropShadow dx="0" dy="8" stdDeviation="7" flood-color="#24262d" flood-opacity="0.18"/>
+    </filter>
+    <filter id="node-shadow" x="-42%" y="-42%" width="184%" height="194%">
+      <feDropShadow dx="0" dy="4" stdDeviation="4" flood-color="#24262d" flood-opacity="0.16"/>
+    </filter>
+  </defs>
+
+  <g filter="url(#tile-shadow)">
+    <rect x="8" y="8" width="112" height="112" rx="30" fill="url(#tile)"/>
+    <rect x="8" y="8" width="112" height="112" rx="30" fill="url(#tile-glow)"/>
+    <rect x="9" y="9" width="110" height="110" rx="29" fill="none" stroke="#ffffff" stroke-opacity="0.92" stroke-width="2"/>
+    <rect x="9" y="9" width="110" height="110" rx="29" fill="none" stroke="#cfd4dc" stroke-opacity="0.34" stroke-width="1"/>
+  </g>
+
+  <path d="M34 93 C50.5 101 77.5 101 94 93" fill="none" stroke="#9aa0aa" stroke-linecap="round" stroke-width="5" opacity="0.16"/>
+
+  <g filter="url(#mark-shadow)">
+    <path d="M34.5 82 L57.9 39.7 C60.7 34.6 67.9 34.6 70.8 39.6 L94.5 82 C97.3 87 93.7 93 88 93 H41 C35.3 93 31.7 87 34.5 82Z" fill="url(#warm)"/>
+    <path d="M49.2 78.5 L64 51.8 L79.2 78.5 H49.2Z" fill="#ffffff" opacity="0.20"/>
+  </g>
+
+  <path d="M64 40 V57" fill="none" stroke="url(#blue)" stroke-width="6.6" stroke-linecap="round"/>
+  <path d="M52.5 70.6 L39.5 81.5" fill="none" stroke="url(#blue)" stroke-width="6.6" stroke-linecap="round"/>
+  <path d="M75.5 70.6 L88.5 81.5" fill="none" stroke="url(#blue)" stroke-width="6.6" stroke-linecap="round"/>
+
+  <g filter="url(#node-shadow)">
+    <circle cx="64" cy="37" r="9" fill="#ffffff"/>
+    <rect x="31" y="76" width="18" height="18" rx="5.5" fill="#ffffff"/>
+    <rect x="80" y="76" width="18" height="18" rx="5.5" fill="#ffffff"/>
+  </g>
+
+  <circle cx="64" cy="37" r="8.25" fill="none" stroke="#dedfe3" stroke-width="1.5"/>
+  <rect x="31.75" y="76.75" width="16.5" height="16.5" rx="4.75" fill="none" stroke="#dedfe3" stroke-width="1.5"/>
+  <rect x="80.75" y="76.75" width="16.5" height="16.5" rx="4.75" fill="none" stroke="#dedfe3" stroke-width="1.5"/>
+
+  <path d="M60 35.8 H68" stroke="#2563eb" stroke-width="2.2" stroke-linecap="round"/>
+  <path d="M60 39.1 H68" stroke="#2563eb" stroke-width="2.2" stroke-linecap="round"/>
+  <path d="M36.7 82.2 L39.6 85 L36.7 87.8" fill="none" stroke="#24262d" stroke-width="2.15" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M41.8 88 H44.4" stroke="#24262d" stroke-width="2.15" stroke-linecap="round"/>
+  <path d="M85.8 82.2 H92.2" stroke="#16a34a" stroke-width="2.1" stroke-linecap="round"/>
+  <path d="M85.8 85.3 H92.2" stroke="#16a34a" stroke-width="2.1" stroke-linecap="round"/>
+  <path d="M85.8 88.4 H90" stroke="#16a34a" stroke-width="2.1" stroke-linecap="round"/>
+
+  <circle cx="64" cy="64" r="13" fill="#ffffff" filter="url(#node-shadow)"/>
+  <circle cx="64" cy="64" r="7.8" fill="url(#blue)"/>
+  <path d="M60.6 68.4 L64 57.2 L67.4 68.4 L64 66.2 L60.6 68.4Z" fill="#ffffff"/>
+</svg>

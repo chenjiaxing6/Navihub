@@ -1,10 +1,12 @@
 <script setup>
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, shallowRef, watch } from "vue";
+import { FolderOpened, EditPen, Plus, Minus, Refresh } from "@element-plus/icons-vue";
 import { ElMessage } from "element-plus/es/components/message/index";
 import { ElMessageBox } from "element-plus/es/components/message-box/index";
 import ContextMenu from "../../shared/ContextMenu.vue";
 import DatabaseDdlPanel from "./DatabaseDdlPanel.vue";
 import DatabaseEmptyState from "./DatabaseEmptyState.vue";
+import DatabaseErDiagram from "./DatabaseErDiagram.vue";
 import DatabaseQueryEditor from "./DatabaseQueryEditor.vue";
 import DatabaseResultFooter from "./DatabaseResultFooter.vue";
 import DatabaseSearchBar from "./DatabaseSearchBar.vue";
@@ -75,6 +77,9 @@ const querySqlByTab = ref({});
 const queryColumnCompletionsBySchema = ref({});
 const schemaTableCounts = ref({});
 const schemaTableMetadata = ref({});
+const schemaColumns = ref({});
+const schemaRelationships = ref({});
+const schemaViewMode = ref("table");
 const selectedSchemaTableKey = ref("");
 const selectedSchemaRowRange = ref({ start: null, end: null });
 const selectedSchemaCellRange = ref({ startRow: null, endRow: null, startColumn: null, endColumn: null });
@@ -156,6 +161,7 @@ watch(
     if (props.activeTopTab?.kind === "schema") {
       loadSchemaTableMetadata(props.activeTopTab.schema);
       loadSchemaTableCounts(props.activeTopTab.schema);
+      loadSchemaDiagramData(props.activeTopTab.schema);
     }
     ensureTableDesignState(props.activeTopTab);
 
@@ -182,6 +188,25 @@ watch(
     await nextTick();
     loadQueryColumnCompletions(schema);
     queryEditorView.value?.dispatch({ effects: [] });
+  },
+);
+
+watch(
+  () => props.activeTopTab?.kind === "schema"
+    ? (props.activeTopTab.schema?.groups ?? [])
+      .find((group) => (group.groupType ?? group.type) === "table")
+      ?.items
+      ?.map((item) => (typeof item === "string" ? item : item.name))
+      .join("\0") ?? ""
+    : "",
+  (signature) => {
+    if (!signature || props.activeTopTab?.kind !== "schema") {
+      return;
+    }
+
+    loadSchemaTableMetadata(props.activeTopTab.schema);
+    loadSchemaTableCounts(props.activeTopTab.schema);
+    loadSchemaDiagramData(props.activeTopTab.schema);
   },
 );
 
@@ -261,6 +286,14 @@ const searchedSchemaTables = computed(() => {
   return activeSchemaTables.value.filter((row) =>
     rowMatchesSearch(row, schemaTableColumns.value, normalizedTableSearch.value, schemaTableCellValue),
   );
+});
+const activeSchemaRelationships = computed(() => {
+  const schema = props.activeTopTab?.kind === "schema" ? props.activeTopTab.schema : null;
+  return schema ? schemaRelationships.value[schema.name] ?? [] : [];
+});
+const activeSchemaColumns = computed(() => {
+  const schema = props.activeTopTab?.kind === "schema" ? props.activeTopTab.schema : null;
+  return schema ? schemaColumns.value[schema.name] ?? {} : {};
 });
 
 const activeResult = computed(() => {
@@ -965,6 +998,22 @@ function isSchemaCellSelected(rowIndex, columnIndex) {
     && columnIndex <= Math.max(startColumn, endColumn);
 }
 
+function isSchemaContextTargetSelected(rowIndex, columnIndex) {
+  if (isSchemaRowSelected(rowIndex)) {
+    return true;
+  }
+
+  if (columnIndex === null) {
+    const { startRow, endRow } = selectedSchemaCellRange.value;
+    return startRow !== null
+      && endRow !== null
+      && rowIndex >= Math.min(startRow, endRow)
+      && rowIndex <= Math.max(startRow, endRow);
+  }
+
+  return isSchemaCellSelected(rowIndex, columnIndex);
+}
+
 function startSchemaRowSelection(event, rowIndex) {
   if (event.button !== 0) {
     return;
@@ -1018,9 +1067,7 @@ function openCopyContextMenu(event, rowIndex = null, columnIndex = null) {
   if (props.activeTopTab?.kind === "schema" && rowIndex !== null) {
     const hasCellSelection = selectedSchemaCellRange.value.startRow !== null;
     const hasRowSelection = selectedSchemaRowRange.value.start !== null;
-    const isInsideSelection = columnIndex === null
-      ? isSchemaRowSelected(rowIndex)
-      : isSchemaCellSelected(rowIndex, columnIndex);
+    const isInsideSelection = isSchemaContextTargetSelected(rowIndex, columnIndex);
 
     if (!hasCellSelection && !hasRowSelection) {
       if (columnIndex === null) {
@@ -1042,9 +1089,7 @@ function openCopyContextMenu(event, rowIndex = null, columnIndex = null) {
   } else if (props.activeTopTab?.kind !== "schema" && rowIndex !== null) {
     const hasCellSelection = selectedResultCellRange.value.startRow !== null;
     const hasRowSelection = selectedResultRowRange.value.start !== null;
-    const isInsideSelection = columnIndex === null
-      ? isAbsoluteResultRowSelected(rowIndex)
-      : isAbsoluteResultCellSelected(rowIndex, columnIndex);
+    const isInsideSelection = isResultContextTargetSelected(rowIndex, columnIndex);
 
     if (!hasCellSelection && !hasRowSelection) {
       if (columnIndex === null) {
@@ -1190,6 +1235,21 @@ function runSelectedSchemaTableAction(action) {
   });
 }
 
+function openSelectedSchemaTable() {
+  const table = selectedSchemaTables()[0];
+  if (table) {
+    openSchemaTable(table);
+  }
+}
+
+function refreshSchemaTableList() {
+  if (props.activeTopTab?.kind !== "schema") {
+    return;
+  }
+
+  emit("refresh-connection", normalizedConnection.value);
+}
+
 function selectedResultCopyText() {
   const rows = searchedResultRows.value;
   const { startRow, endRow, startColumn, endColumn } = selectedResultCellRange.value;
@@ -1263,6 +1323,22 @@ function isAbsoluteResultCellSelected(rowIndex, columnIndex) {
     && rowIndex <= Math.max(startRow, endRow)
     && columnIndex >= Math.min(startColumn, endColumn)
     && columnIndex <= Math.max(startColumn, endColumn);
+}
+
+function isResultContextTargetSelected(rowIndex, columnIndex) {
+  if (isAbsoluteResultRowSelected(rowIndex)) {
+    return true;
+  }
+
+  if (columnIndex === null) {
+    const { startRow, endRow } = selectedResultCellRange.value;
+    return startRow !== null
+      && endRow !== null
+      && rowIndex >= Math.min(startRow, endRow)
+      && rowIndex <= Math.max(startRow, endRow);
+  }
+
+  return isAbsoluteResultCellSelected(rowIndex, columnIndex);
 }
 
 function selectedResultColumnIndexes() {
@@ -2474,6 +2550,72 @@ async function loadSchemaTableMetadata(schema) {
   }
 }
 
+async function loadSchemaDiagramData(schema) {
+  if (!schema?.name || schemaRelationships.value[schema.name]) {
+    return;
+  }
+
+  const relationSql = `SELECT
+    k.CONSTRAINT_NAME AS name,
+    k.TABLE_NAME AS tableName,
+    k.COLUMN_NAME AS columnName,
+    k.REFERENCED_TABLE_NAME AS referencedTable,
+    k.REFERENCED_COLUMN_NAME AS referencedColumn
+  FROM information_schema.KEY_COLUMN_USAGE k
+  WHERE k.TABLE_SCHEMA = ${quoteString(schema.name)}
+    AND k.REFERENCED_TABLE_NAME IS NOT NULL
+  ORDER BY k.TABLE_NAME, k.CONSTRAINT_NAME, k.ORDINAL_POSITION;`;
+  const columnSql = `SELECT
+    c.TABLE_NAME AS tableName,
+    c.COLUMN_NAME AS columnName,
+    c.COLUMN_TYPE AS columnType,
+    c.COLUMN_KEY AS columnKey
+  FROM information_schema.COLUMNS c
+  WHERE c.TABLE_SCHEMA = ${quoteString(schema.name)}
+  ORDER BY c.TABLE_NAME, c.ORDINAL_POSITION;`;
+
+  try {
+    const [relationshipResult, columnResult] = await Promise.all([
+      executeMysqlQuery(currentConfig(), "information_schema", relationSql),
+      executeMysqlQuery(currentConfig(), "information_schema", columnSql),
+    ]);
+    const columnsByTable = {};
+    for (const row of columnResult.rows ?? []) {
+      const tableName = row.tableName ?? "";
+      if (!tableName) {
+        continue;
+      }
+
+      columnsByTable[tableName] = [
+        ...(columnsByTable[tableName] ?? []),
+        {
+          name: row.columnName ?? "",
+          type: row.columnType ?? "",
+          primary: row.columnKey === "PRI",
+          indexed: row.columnKey === "MUL" || row.columnKey === "UNI",
+        },
+      ];
+    }
+
+    schemaColumns.value = {
+      ...schemaColumns.value,
+      [schema.name]: columnsByTable,
+    };
+    schemaRelationships.value = {
+      ...schemaRelationships.value,
+      [schema.name]: (relationshipResult.rows ?? []).map((row) => ({
+        name: row.name ?? "",
+        table: row.tableName ?? "",
+        column: row.columnName ?? "",
+        referencedTable: row.referencedTable ?? "",
+        referencedColumn: row.referencedColumn ?? "",
+      })),
+    };
+  } catch (error) {
+    ElMessage.error(`加载 ER 图失败：${error}`);
+  }
+}
+
 function handlePageSizeChange(pageSize) {
   if (!props.activeTopTab || props.activeTopTab.kind !== "table") {
     return;
@@ -2508,8 +2650,59 @@ function handlePageChange(page) {
       />
 
       <section v-else-if="activeTopTab.kind === 'schema'" class="tab-content">
+        <div class="schema-view-toolbar">
+          <div class="schema-view-actions" aria-label="表列表操作">
+            <button
+              class="schema-tool-button"
+              type="button"
+              title="打开表"
+              :disabled="selectedSchemaTables().length !== 1"
+              @click="openSelectedSchemaTable"
+            >
+              <el-icon><FolderOpened /></el-icon>
+            </button>
+            <button
+              class="schema-tool-button"
+              type="button"
+              title="设计表"
+              :disabled="selectedSchemaTables().length !== 1"
+              @click="runSelectedSchemaTableAction('design-table')"
+            >
+              <el-icon><EditPen /></el-icon>
+            </button>
+            <span class="schema-tool-separator" />
+            <button
+              class="schema-tool-button is-add"
+              type="button"
+              title="新建表"
+              @click="runSelectedSchemaTableAction('create-table')"
+            >
+              <el-icon><Plus /></el-icon>
+            </button>
+            <button
+              class="schema-tool-button is-remove"
+              type="button"
+              title="删除表"
+              :disabled="selectedSchemaTables().length === 0"
+              @click="runSelectedSchemaTableAction('drop-table')"
+            >
+              <el-icon><Minus /></el-icon>
+            </button>
+            <span class="schema-tool-separator" />
+            <button class="schema-tool-button" type="button" title="刷新表列表" @click="refreshSchemaTableList">
+              <el-icon><Refresh /></el-icon>
+            </button>
+          </div>
+          <el-segmented
+            v-model="schemaViewMode"
+            :options="[
+              { label: '表列表', value: 'table' },
+              { label: 'ER 图', value: 'er' },
+            ]"
+          />
+        </div>
         <DatabaseSearchBar
-          v-if="tableSearchOpen"
+          v-if="schemaViewMode === 'table' && tableSearchOpen"
           ref="searchInputRef"
           v-model="tableSearchQuery"
           placeholder="搜索表列表"
@@ -2519,6 +2712,7 @@ function handlePageChange(page) {
           @close="closeTableSearch"
         />
         <DatabaseVirtualTable
+          v-if="schemaViewMode === 'table'"
           ref="schemaTableViewport"
           is-schema-table
           row-key-prefix="schema"
@@ -2540,6 +2734,13 @@ function handlePageChange(page) {
           @cell-selection-extend="extendSchemaCellSelection"
           @context-menu="openCopyContextMenu"
           @open-row="openSchemaTable"
+        />
+        <DatabaseErDiagram
+          v-else
+          :columns-by-table="activeSchemaColumns"
+          :relationships="activeSchemaRelationships"
+          :tables="activeSchemaTables"
+          @open-table="openSchemaTable"
         />
       </section>
 
@@ -2681,6 +2882,7 @@ function handlePageChange(page) {
 
 
 .tab-content {
+  position: relative;
   display: flex;
   flex-direction: column;
   height: 100%;
@@ -2690,6 +2892,75 @@ function handlePageChange(page) {
   border-radius: 10px;
   background: #fff;
   box-shadow: none;
+}
+
+.schema-view-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 38px;
+  padding: 4px 8px;
+  border-bottom: 1px solid var(--line);
+  background: #fff;
+  font-size: 12px;
+}
+
+.schema-view-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.schema-tool-button {
+  display: inline-grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.schema-tool-button .el-icon {
+  font-size: 16px;
+}
+
+.schema-tool-button:hover:not(:disabled) {
+  background: var(--surface-strong);
+  color: var(--text);
+}
+
+.schema-tool-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.42;
+}
+
+.schema-tool-separator {
+  width: 1px;
+  height: 24px;
+  margin: 0 6px;
+  background: var(--line);
+}
+
+.schema-view-toolbar :deep(.el-segmented) {
+  --el-segmented-item-selected-bg-color: #fff;
+  --el-segmented-item-selected-color: var(--text);
+  border: 1px solid var(--line);
+  background: var(--surface-muted);
+  font-size: 12px;
+  line-height: 1;
+}
+
+.schema-view-toolbar :deep(.el-segmented__item) {
+  min-height: 24px;
+  padding: 0 8px;
+}
+
+.schema-view-toolbar :deep(.el-segmented__item-label) {
+  font-size: 12px;
+  font-weight: 650;
 }
 
 .query-editor-root {

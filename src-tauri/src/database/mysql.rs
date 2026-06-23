@@ -36,6 +36,7 @@ pub struct MysqlSchemaGroup {
 #[derive(Debug, Serialize)]
 pub struct MysqlSchema {
     pub name: String,
+    pub collation: String,
     pub groups: Vec<MysqlSchemaGroup>,
 }
 
@@ -278,24 +279,25 @@ pub fn mysql_load_schema(
     let pool = pool(&state, &config, Some("information_schema"))?;
     let mut conn = pool.get_conn().map_err(|error| error.to_string())?;
 
-    let databases: Vec<String> = conn
+    let databases: Vec<(String, String)> = conn
         .query_map(
-            "SELECT SCHEMA_NAME
+            "SELECT SCHEMA_NAME, DEFAULT_COLLATION_NAME
              FROM SCHEMATA
              ORDER BY SCHEMA_NAME",
-            |name: String| name,
+            |(name, collation): (String, String)| (name, collation),
         )
         .map_err(|error| error.to_string())?;
 
     databases
         .into_iter()
-        .map(|database| {
+        .map(|(database, collation)| {
             let tables = fetch_table_items(&mut conn, &database, "BASE TABLE")?;
             let views = fetch_table_items(&mut conn, &database, "VIEW")?;
             let routines = fetch_routines(&mut conn, &database)?;
 
             Ok(MysqlSchema {
                 name: database,
+                collation,
                 groups: vec![
                     MysqlSchemaGroup {
                         group_type: "table".to_string(),

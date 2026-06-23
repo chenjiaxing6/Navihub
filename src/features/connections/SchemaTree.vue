@@ -12,7 +12,16 @@ const props = defineProps({
   loading: { type: Boolean, default: false },
 });
 
-const emit = defineEmits(["activate-schema", "create-query", "open-schema", "open-table-query", "database-object-action", "toggle-schema-pin"]);
+const emit = defineEmits([
+  "activate-schema",
+  "close-schema",
+  "create-query",
+  "open-schema",
+  "open-table-query",
+  "database-object-action",
+  "refresh-connection",
+  "toggle-schema-pin",
+]);
 const selectedKey = ref("");
 const selectedTableKeys = ref(new Set());
 const tableSelectionAnchor = ref(null);
@@ -52,15 +61,20 @@ const filteredSchemas = computed(() => {
 });
 const schemaContextItems = computed(() => [
   {
+    key: "toggle-schema-open",
+    label: contextSchema.value && isSchemaOpen(contextSchema.value) ? "关闭数据库" : "打开数据库",
+  },
+  {
     key: "toggle-pin",
     label: contextSchema.value && isSchemaPinned(contextSchema.value) ? "取消置顶" : "置顶",
   },
+  { key: "edit-database", label: "编辑数据库...", divided: true },
+  { key: "create-database", label: "新建数据库..." },
+  { key: "drop-database", label: "删除数据库", danger: true },
   { key: "create-query", label: "新建查询", divided: true },
-  { key: "create-database", label: "新建库", divided: true },
-  { key: "create-table", label: "新建表" },
-  { key: "import-sql", label: "导入 SQL", divided: true },
-  { key: "export-database-sql", label: "导出库为 SQL" },
-  { key: "drop-database", label: "删除库", danger: true, divided: true },
+  { key: "import-sql", label: "运行 SQL 文件...", divided: true },
+  { key: "export-database-sql", label: "转储 SQL 文件" },
+  { key: "refresh-connection", label: "刷新", divided: true },
 ]);
 
 function sortSchemas(schemas) {
@@ -280,6 +294,17 @@ function handleSchemaContextSelect(item) {
     emit("create-query", { schema: contextSchema.value });
   } else if (item.key === "toggle-pin") {
     emit("toggle-schema-pin", { schema: contextSchema.value });
+  } else if (item.key === "toggle-schema-open") {
+    const payload = { schema: contextSchema.value };
+    if (isSchemaOpen(contextSchema.value)) {
+      emit("close-schema", payload);
+    } else {
+      emit("open-schema", payload);
+    }
+  } else if (item.key === "refresh-connection") {
+    emit("refresh-connection", { schema: contextSchema.value });
+  } else if (item.key === "edit-database") {
+    emit("database-object-action", { action: item.key, schema: contextSchema.value });
   } else {
     emit("database-object-action", { action: item.key, schema: contextSchema.value });
   }
@@ -383,7 +408,7 @@ function includesQuery(value, query) {
           @contextmenu.prevent="openObjectContextMenu($event, schema, group, item)"
         >
           <span class="object-icon" :class="itemIconClass[groupType(group)] ?? 'object-icon-default'" />
-          {{ itemName(item) }}
+          <span class="tree-item-name" :title="itemName(item)">{{ itemName(item) }}</span>
         </button>
       </details>
     </details>
@@ -577,6 +602,7 @@ summary em {
   align-items: center;
   gap: 7px;
   width: 100%;
+  min-width: 0;
   min-height: 28px;
   padding: 0 7px 0 32px;
   border: 0;
@@ -588,6 +614,13 @@ summary em {
   text-align: left;
   -webkit-user-select: none;
   user-select: none;
+}
+
+.tree-item-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .tree-item:hover {

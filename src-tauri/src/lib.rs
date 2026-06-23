@@ -16,6 +16,7 @@ pub fn run() {
             database::mysql::mysql_execute_query,
             database::mysql::mysql_describe_table,
             database::mysql_admin::mysql_create_database,
+            database::mysql_admin::mysql_alter_database_options,
             database::mysql_admin::mysql_list_database_options,
             database::mysql_admin::mysql_drop_database,
             database::mysql_admin::mysql_create_table,

@@ -287,22 +287,19 @@ function shellArg(value) {
 <template>
   <section class="monitor-workspace" :class="{ compact: true }">
     <div v-if="loading" class="monitor-loading" />
-    <header class="monitor-toolbar">
-      <span class="monitor-toolbar-spacer" />
-      <div class="monitor-actions">
-        <el-tooltip content="刷新">
-        <el-button :icon="Refresh" :loading="manualRefreshing" circle @click="refresh({ visible: true })" />
-        </el-tooltip>
-        <el-tooltip content="关闭">
-          <el-button :icon="Close" circle @click="emit('close')" />
-        </el-tooltip>
-      </div>
-    </header>
 
     <el-alert v-if="error" class="monitor-alert" :title="error" type="error" :closable="false" />
 
     <div class="monitor-scroll">
       <section class="panel host-panel">
+        <div class="monitor-actions">
+          <el-tooltip content="刷新">
+            <el-button :icon="Refresh" :loading="manualRefreshing" circle @click="refresh({ visible: true })" />
+          </el-tooltip>
+          <el-tooltip content="关闭">
+            <el-button :icon="Close" circle @click="emit('close')" />
+          </el-tooltip>
+        </div>
         <div class="host-item">
           <el-icon><User /></el-icon>
           <span>用户</span>
@@ -559,62 +556,22 @@ function shellArg(value) {
   background: var(--sidebar-bg);
 }
 
-.monitor-toolbar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  height: 56px;
-  padding: 0 14px;
-  border-bottom: 1px solid var(--line);
-  background: var(--panel);
-}
-
-.monitor-workspace.compact .monitor-toolbar {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: 8px;
-  height: 40px;
-  padding: 0 10px 0 12px;
-}
-
-.monitor-toolbar-spacer {
-  min-width: 0;
-}
-
 .monitor-actions {
+  position: absolute;
+  top: 7px;
+  right: 7px;
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 2px;
 }
 
-.monitor-workspace.compact .monitor-toolbar h2 {
-  max-width: 100%;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: 15px;
-}
-
-.monitor-toolbar p {
-  margin: 0 0 3px;
-  color: var(--faint);
-  font-size: 10px;
-  font-weight: 780;
-  letter-spacing: 0;
-}
-
-.monitor-toolbar h2 {
+.monitor-actions :deep(.el-button) {
+  width: 26px;
+  height: 26px;
   margin: 0;
-  font-size: 16px;
-  font-weight: 780;
-}
-
-.monitor-toolbar :deep(.el-button) {
-  width: 30px;
-  height: 30px;
   border-radius: 8px;
-  border-color: var(--line);
-  background: #fff;
+  border-color: transparent;
+  background: transparent;
   color: var(--muted);
 }
 
@@ -635,7 +592,7 @@ function shellArg(value) {
   display: flex;
   flex-direction: column;
   gap: 6px;
-  padding: 8px;
+  padding: 0 8px 8px;
 }
 
 .panel {
@@ -643,6 +600,10 @@ function shellArg(value) {
   border-radius: 7px;
   background: var(--panel);
   box-shadow: none;
+}
+
+.monitor-workspace.compact .panel {
+  border-radius: 0;
 }
 
 .host-panel,
@@ -654,6 +615,7 @@ function shellArg(value) {
 }
 
 .host-panel {
+  position: relative;
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 10px;

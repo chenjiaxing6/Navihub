@@ -38,6 +38,7 @@ const emit = defineEmits([
   "edit-connection",
   "activate-schema",
   "close-connection",
+  "close-schema",
   "close-top-tab",
   "close-top-tabs",
   "select-top-tab",
@@ -171,6 +172,7 @@ function stopSidebarResize() {
         :schema-open-versions="props.schemaOpenVersions"
         @activate-schema="emit('activate-schema', $event)"
         @close-connection="emit('close-connection', $event)"
+        @close-schema="emit('close-schema', $event)"
         @create-connection="emit('create-connection', $event)"
         @delete-connection="emit('delete-connection', $event)"
         @delete-folder="emit('delete-connection-folder', $event)"

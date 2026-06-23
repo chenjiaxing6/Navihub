@@ -9,6 +9,15 @@ export function createMysqlDatabase(config, database, options = {}) {
   });
 }
 
+export function alterMysqlDatabaseOptions(config, database, options = {}) {
+  return invoke("mysql_alter_database_options", {
+    config,
+    database,
+    charset: options.charset || null,
+    collation: options.collation || null,
+  });
+}
+
 export function listMysqlDatabaseOptions(config) {
   return invoke("mysql_list_database_options", { config });
 }

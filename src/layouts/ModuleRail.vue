@@ -12,7 +12,7 @@ const emit = defineEmits(["open-settings", "set-workspace"]);
 <template>
   <nav class="module-rail" aria-label="主导航">
     <div class="brand" title="NaviHub">
-      <img src="../../src-tauri/icons/icon.png" alt="NaviHub" />
+      <img src="../../src-tauri/icons/navihub-icon-grand.svg" alt="NaviHub" />
     </div>
     <button
       v-for="workspace in workspaces"

@@ -17,6 +17,7 @@ const props = defineProps({
 
 const emit = defineEmits([
   "close-connection",
+  "close-schema",
   "create-connection",
   "delete-connection",
   "duplicate-connection",
@@ -100,31 +101,32 @@ const connectionContextItems = computed(() => {
   const connection = contextConnection.value;
   const connected = connection?.status === "connected";
   const connecting = connection?.status === "connecting";
+  const isDatabase = connection?.workspace === "database";
   return [
-    { key: "open", label: "连接", disabled: connected || connecting },
-    { key: "close", label: "断开", disabled: !connected && !connecting },
-    { key: "refresh", label: "刷新", disabled: connection?.workspace !== "database" },
-    { key: "create-database", label: "新建库", disabled: connection?.workspace !== "database" || !connected },
-    { key: "edit", label: "编辑", divided: true },
-    { key: "duplicate", label: "复制连接" },
-    { key: "move:none", label: "移到顶层", disabled: !connection?.folderId, divided: true },
-    ...props.folders.map((folder) => ({
-      key: `move:${folder.id}`,
-      label: `移到 ${folder.name}`,
-      disabled: connection?.folderId === folder.id,
-    })),
-    { key: "delete", label: "删除", danger: true, divided: props.folders.length === 0 },
+    {
+      key: connected || connecting ? "close" : "open",
+      label: connected || connecting ? "关闭连接" : "打开连接",
+    },
+    { key: "edit", label: "编辑连接...", divided: true },
+    { key: "create-connection", label: "新建连接" },
+    { key: "duplicate", label: "复制连接..." },
+    { key: "delete", label: "删除连接", danger: true },
+    { key: "create-database", label: "新建数据库...", divided: true, disabled: !isDatabase || !connected },
+    { key: "create-query", label: "新建查询", disabled: !isDatabase || !connected },
+    { key: "import-sql", label: "运行 SQL 文件...", divided: true, disabled: !isDatabase || !connected },
+    { key: "refresh", label: "刷新", divided: true, disabled: !isDatabase },
   ];
 });
 
 function handleConnectionClick(connection) {
   emit("select-connection", connection);
-  if (canToggleConnection(connection)) {
-    emit("toggle-connection-expanded", connection);
-  }
 }
 
 function handleConnectionDoubleClick(connection) {
+  if (["connected", "connecting"].includes(connection.status)) {
+    return;
+  }
+
   emit("open-connection", connection);
 }
 
@@ -157,8 +159,18 @@ function handleConnectionContextSelect(item) {
     emit("refresh-connection", contextConnection.value);
   } else if (item.key === "create-database") {
     emit("database-object-action", { connection: contextConnection.value, action: "create-database" });
+  } else if (item.key === "create-query") {
+    emit("create-query", { connection: contextConnection.value, schema: contextConnection.value.config?.database ?? "" });
+  } else if (item.key === "import-sql") {
+    emit("database-object-action", {
+      connection: contextConnection.value,
+      action: "import-sql",
+      schema: contextConnection.value.config?.database ?? "",
+    });
   } else if (item.key === "edit") {
     emit("edit-connection", contextConnection.value);
+  } else if (item.key === "create-connection") {
+    emit("create-connection");
   } else if (item.key === "duplicate") {
     emit("duplicate-connection", contextConnection.value);
   } else if (item.key === "delete") {
@@ -381,10 +393,12 @@ function schemasForConnection(connection) {
               :schema-open-versions="schemaOpenVersions"
               :schemas="schemasForConnection(connection)"
               @activate-schema="(payload) => emit('activate-schema', { connection, ...payload })"
+              @close-schema="(payload) => emit('close-schema', { connection, ...payload })"
               @create-query="(payload) => emit('create-query', { connection, ...payload })"
               @database-object-action="(payload) => emit('database-object-action', { connection, ...payload })"
               @open-schema="(payload) => emit('open-schema', { connection, ...payload })"
               @open-table-query="(payload) => emit('open-table-query', { connection, ...payload })"
+              @refresh-connection="emit('refresh-connection', connection)"
               @toggle-schema-pin="(payload) => emit('toggle-schema-pin', { connection, ...payload })"
             />
           </template>
@@ -474,10 +488,12 @@ function schemasForConnection(connection) {
         :schema-open-versions="schemaOpenVersions"
         :schemas="schemasForConnection(connection)"
         @activate-schema="(payload) => emit('activate-schema', { connection, ...payload })"
+        @close-schema="(payload) => emit('close-schema', { connection, ...payload })"
         @create-query="(payload) => emit('create-query', { connection, ...payload })"
         @database-object-action="(payload) => emit('database-object-action', { connection, ...payload })"
         @open-schema="(payload) => emit('open-schema', { connection, ...payload })"
         @open-table-query="(payload) => emit('open-table-query', { connection, ...payload })"
+        @refresh-connection="emit('refresh-connection', connection)"
         @toggle-schema-pin="(payload) => emit('toggle-schema-pin', { connection, ...payload })"
       />
     </template>

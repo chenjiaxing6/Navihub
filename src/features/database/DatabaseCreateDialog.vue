@@ -5,7 +5,9 @@ import { listMysqlDatabaseOptions } from "./mysqlAdminApi";
 const props = defineProps({
   modelValue: { type: Boolean, default: false },
   config: { type: Object, default: null },
+  database: { type: Object, default: null },
   loading: { type: Boolean, default: false },
+  mode: { type: String, default: "create" },
 });
 
 const emit = defineEmits(["submit", "update:modelValue"]);
@@ -29,6 +31,9 @@ const visible = computed({
     emit("update:modelValue", value);
   },
 });
+const isEditMode = computed(() => props.mode === "edit");
+const dialogTitle = computed(() => isEditMode.value ? "编辑数据库" : "新建数据库");
+const submitText = computed(() => isEditMode.value ? "保存修改" : "创建");
 
 const fallbackCharsets = [
   { name: "utf8mb4", defaultCollation: "utf8mb4_unicode_ci", description: "UTF-8 Unicode" },
@@ -66,7 +71,6 @@ watch(
       return;
     }
 
-    form.database = "";
     resetForm();
     loadOptions();
   },
@@ -83,9 +87,10 @@ watch(
 );
 
 function resetForm() {
-  form.database = "";
-  form.charset = "utf8mb4";
-  form.collation = "utf8mb4_unicode_ci";
+  form.database = props.database?.name ?? "";
+  const initialCollation = props.database?.collation ?? "";
+  form.charset = initialCollation.split("_")?.[0] || "utf8mb4";
+  form.collation = initialCollation || "utf8mb4_unicode_ci";
 }
 
 async function loadOptions() {
@@ -96,10 +101,12 @@ async function loadOptions() {
   optionsLoading.value = true;
   try {
     databaseOptions.value = await listMysqlDatabaseOptions(props.config);
-    const utf8mb4 = charsetOptions.value.find((item) => item.name === "utf8mb4") ?? charsetOptions.value[0];
-    if (utf8mb4) {
-      form.charset = utf8mb4.name;
-      form.collation = utf8mb4.defaultCollation || collationOptions.value.find((item) => item.isDefault)?.name || collationOptions.value[0]?.name || "";
+    if (!isEditMode.value || !form.collation) {
+      const utf8mb4 = charsetOptions.value.find((item) => item.name === "utf8mb4") ?? charsetOptions.value[0];
+      if (utf8mb4) {
+        form.charset = utf8mb4.name;
+        form.collation = utf8mb4.defaultCollation || collationOptions.value.find((item) => item.isDefault)?.name || collationOptions.value[0]?.name || "";
+      }
     }
   } catch {
     databaseOptions.value = {
@@ -137,14 +144,20 @@ function submit() {
   >
     <template #header>
       <div class="database-object-dialog__header">
-        <strong>新建数据库</strong>
+        <strong>{{ dialogTitle }}</strong>
         <button class="database-object-dialog__close" type="button" aria-label="关闭" :disabled="loading" @click="close">×</button>
       </div>
     </template>
 
     <el-form class="database-object-form" :model="form" label-position="top">
       <el-form-item label="数据库名称">
-        <el-input v-model="form.database" autofocus placeholder="例如：app_data" @keydown.enter.prevent="submit" />
+        <el-input
+          v-model="form.database"
+          :disabled="isEditMode"
+          autofocus
+          placeholder="例如：app_data"
+          @keydown.enter.prevent="submit"
+        />
       </el-form-item>
       <el-form-item label="字符集">
         <el-select
@@ -190,7 +203,7 @@ function submit() {
 
     <template #footer>
       <el-button :disabled="loading" @click="close">取消</el-button>
-      <el-button type="primary" :loading="loading" @click="submit">创建</el-button>
+      <el-button type="primary" :loading="loading" @click="submit">{{ submitText }}</el-button>
     </template>
   </el-dialog>
 </template>

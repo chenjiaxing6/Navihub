@@ -8,7 +8,7 @@ import ConnectionDialog from "./features/connections/ConnectionDialog.vue";
 import DatabaseCreateDialog from "./features/database/DatabaseCreateDialog.vue";
 import { createMysqlConnection, formatMysqlMeta } from "./features/database/databaseDefaults";
 import { runDatabaseObjectAction } from "./features/database/databaseObjectActions";
-import { createMysqlDatabase } from "./features/database/mysqlAdminApi";
+import { alterMysqlDatabaseOptions, createMysqlDatabase } from "./features/database/mysqlAdminApi";
 import { loadMysqlSchema } from "./features/database/mysqlApi";
 import SettingsDialog from "./features/settings/SettingsDialog.vue";
 import { useAppConnections } from "./shared/useAppConnections";
@@ -767,6 +767,15 @@ function activateSchema(payload) {
   }
 }
 
+function closeSchema(payload) {
+  const tabKey = `schema:${payload.connection.id}:${payload.schema.name}`;
+  const existing = dynamicTabs.value.find((tab) => tab.key === tabKey);
+  openSchemaKeys.value = openSchemaKeys.value.filter((key) => key !== tabKey);
+  if (existing) {
+    closeTabsByIds([existing.id]);
+  }
+}
+
 function selectTopTab(tabId) {
   const tab = topTabs.value.find((item) => item.id === tabId);
   if (!tab) {
@@ -923,6 +932,12 @@ async function handleDatabaseObjectAction(payload) {
     return;
   }
 
+  if (payload?.action === "edit-database") {
+    pendingDatabaseCreatePayload.value = payload;
+    databaseCreateDialogVisible.value = true;
+    return;
+  }
+
   if (payload?.action === "design-table") {
     openTableDesigner({ ...payload, mode: "edit" });
     return;
@@ -962,16 +977,24 @@ async function handleCreateDatabaseSubmit(form) {
 
   databaseCreateLoading.value = true;
   try {
-    await createMysqlDatabase(payload.connection.config, database, {
-      charset: form.charset,
-      collation: form.collation,
-    });
-    ElMessage.success("库已创建");
+    if (payload.action === "edit-database") {
+      await alterMysqlDatabaseOptions(payload.connection.config, database, {
+        charset: form.charset,
+        collation: form.collation,
+      });
+      ElMessage.success("数据库已更新");
+    } else {
+      await createMysqlDatabase(payload.connection.config, database, {
+        charset: form.charset,
+        collation: form.collation,
+      });
+      ElMessage.success("库已创建");
+    }
     databaseCreateDialogVisible.value = false;
     pendingDatabaseCreatePayload.value = null;
     await refreshConnection(payload.connection);
   } catch (error) {
-    ElMessage.error(`创建数据库失败：${error}`);
+    ElMessage.error(`${payload.action === "edit-database" ? "更新" : "创建"}数据库失败：${error}`);
   } finally {
     databaseCreateLoading.value = false;
   }
@@ -1001,6 +1024,7 @@ async function handleCreateDatabaseSubmit(form) {
       :visible-connection-folders="visibleConnectionFolders"
       @activate-schema="activateSchema"
       @close-connection="closeConnection"
+      @close-schema="closeSchema"
       @close-top-tab="closeTopTab"
       @close-top-tabs="closeTopTabs"
       @create-connection="openCreateConnection"
@@ -1041,7 +1065,9 @@ async function handleCreateDatabaseSubmit(form) {
     <DatabaseCreateDialog
       v-model="databaseCreateDialogVisible"
       :config="pendingDatabaseCreatePayload?.connection?.config"
+      :database="pendingDatabaseCreatePayload?.schema"
       :loading="databaseCreateLoading"
+      :mode="pendingDatabaseCreatePayload?.action === 'edit-database' ? 'edit' : 'create'"
       @submit="handleCreateDatabaseSubmit"
     />
 

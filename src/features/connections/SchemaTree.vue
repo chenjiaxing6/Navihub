@@ -4,6 +4,7 @@ import ContextMenu from "../../shared/ContextMenu.vue";
 
 const props = defineProps({
   connectionId: { type: String, required: true },
+  connectionEngine: { type: String, default: "mysql" },
   openSchemaKeys: { type: Array, default: () => [] },
   pinnedSchemas: { type: Array, default: () => [] },
   searchQuery: { type: String, default: "" },
@@ -68,12 +69,18 @@ const schemaContextItems = computed(() => [
     key: "toggle-pin",
     label: contextSchema.value && isSchemaPinned(contextSchema.value) ? "取消置顶" : "置顶",
   },
-  { key: "edit-database", label: "编辑数据库...", divided: true },
-  { key: "create-database", label: "新建数据库..." },
-  { key: "drop-database", label: "删除数据库", danger: true },
+  { key: "edit-database", label: "编辑数据库...", divided: true, hidden: props.connectionEngine === "sqlite" },
+  { key: "create-database", label: "新建数据库...", hidden: props.connectionEngine === "sqlite" },
+  { key: "drop-database", label: "删除数据库", danger: true, hidden: props.connectionEngine === "sqlite" },
   { key: "create-query", label: "新建查询", divided: true },
   { key: "import-sql", label: "运行 SQL 文件...", divided: true },
   { key: "export-database-sql", label: "转储 SQL 文件" },
+  { key: "sqlite-vacuum", label: "VACUUM", divided: true, hidden: props.connectionEngine !== "sqlite" },
+  { key: "sqlite-integrity-check", label: "完整性检查", hidden: props.connectionEngine !== "sqlite" },
+  { key: "sqlite-quick-check", label: "快速检查", hidden: props.connectionEngine !== "sqlite" },
+  { key: "sqlite-analyze", label: "ANALYZE", hidden: props.connectionEngine !== "sqlite" },
+  { key: "sqlite-reindex", label: "REINDEX", hidden: props.connectionEngine !== "sqlite" },
+  { key: "sqlite-database-info", label: "数据库信息", hidden: props.connectionEngine !== "sqlite" },
   { key: "refresh-connection", label: "刷新", divided: true },
 ]);
 
@@ -114,6 +121,8 @@ const folderClass = {
   view: "group-icon view-folder",
   query: "group-icon query-folder",
   function: "group-icon function-folder",
+  index: "group-icon index-folder",
+  trigger: "group-icon trigger-folder",
 };
 
 const itemIconClass = {
@@ -121,6 +130,8 @@ const itemIconClass = {
   view: "view-icon",
   query: "query-icon",
   function: "function-icon",
+  index: "index-icon",
+  trigger: "trigger-icon",
 };
 
 function groupType(group) {
@@ -347,6 +358,18 @@ function itemKey(schema, group, item) {
 function includesQuery(value, query) {
   return String(value ?? "").toLowerCase().includes(query);
 }
+
+function handleObjectDoubleClick(schema, group, item) {
+  const type = groupType(group);
+  if (type === "query") {
+    emit("open-table-query", { schema: schema.name, groupType: type, item });
+    return;
+  }
+
+  if (type === "table" || type === "view") {
+    emit("open-table-query", { schema: schema.name, groupType: type, item: itemName(item) });
+  }
+}
 </script>
 
 <template>
@@ -404,7 +427,7 @@ function includesQuery(value, query) {
             'multi-selected': groupType(group) === 'table' && isTableSelected(schema, group, item),
           }"
           @click.prevent="selectTable($event, schema, group, item)"
-          @dblclick.stop="emit('open-table-query', { schema: schema.name, groupType: groupType(group), item: groupType(group) === 'query' ? item : itemName(item) })"
+          @dblclick.stop="handleObjectDoubleClick(schema, group, item)"
           @contextmenu.prevent="openObjectContextMenu($event, schema, group, item)"
         >
           <span class="object-icon" :class="itemIconClass[groupType(group)] ?? 'object-icon-default'" />
@@ -746,6 +769,14 @@ summary.opened .schema-icon::after {
   color: #d97706;
 }
 
+.index-folder {
+  color: #475569;
+}
+
+.trigger-folder {
+  color: #be123c;
+}
+
 .object-icon {
   border: 1px solid var(--line-strong);
   border-radius: 5px;
@@ -819,6 +850,26 @@ summary.opened .schema-icon::after {
 
 .function-icon::before {
   content: "ƒ";
+}
+
+.index-icon {
+  color: #475569;
+  font-size: 10px;
+  font-weight: 850;
+}
+
+.index-icon::before {
+  content: "IX";
+}
+
+.trigger-icon {
+  color: #be123c;
+  font-size: 12px;
+  font-weight: 850;
+}
+
+.trigger-icon::before {
+  content: "T";
 }
 
 .object-icon-default::before {

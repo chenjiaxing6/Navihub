@@ -208,7 +208,10 @@ fn append_tables_export_sql(
         sql.push_str(";\n\n");
 
         if include_data {
-            sql.push_str(&format!("-- Data for {}\n", qualified_name(database, &table)?));
+            sql.push_str(&format!(
+                "-- Data for {}\n",
+                qualified_name(database, &table)?
+            ));
             append_table_inserts(conn, sql, database, &table)?;
             sql.push('\n');
         }

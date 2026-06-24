@@ -20,21 +20,22 @@ export function defaultDesignColumn() {
 }
 
 export function createDesignState(tab) {
+  const isSqlite = tab.engine === "sqlite";
   return {
     mode: tab.mode,
     loaded: tab.mode === "create",
     saving: false,
     originalTable: tab.table ?? "",
     tableName: tab.table ?? "",
-    engine: "InnoDB",
-    charset: "utf8mb4",
-    collation: "utf8mb4_unicode_ci",
+    engine: isSqlite ? "SQLite" : "InnoDB",
+    charset: isSqlite ? "" : "utf8mb4",
+    collation: isSqlite ? "BINARY" : "utf8mb4_unicode_ci",
     tableComment: "",
     columns: tab.mode === "create"
       ? [{
           ...defaultDesignColumn(),
           name: "id",
-          typeName: "BIGINT UNSIGNED",
+          typeName: isSqlite ? "INTEGER" : "BIGINT UNSIGNED",
           length: "",
           nullable: false,
           key: "PRIMARY",
@@ -65,14 +66,15 @@ export function columnsFromTableDetail(detail) {
 
   return (detail.columns ?? []).map((column) => {
     const parsedType = parseColumnType(column.columnType);
+    const isPrimary = primaryColumns.has(column.name) || column.key === "PRI";
     const normalized = {
       name: column.name,
       ...parsedType,
       nullable: column.nullable === "YES",
       virtual: false,
-      key: primaryColumns.has(column.name) ? "PRIMARY" : column.key === "UNI" ? "UNIQUE" : column.key === "MUL" ? "INDEX" : "",
+      key: isPrimary ? "PRIMARY" : column.key === "UNI" ? "UNIQUE" : column.key === "MUL" ? "INDEX" : "",
       defaultValue: column.defaultValue ?? "",
-      primary: primaryColumns.has(column.name),
+      primary: isPrimary,
       autoIncrement: String(column.extra ?? "").toLowerCase().includes("auto_increment"),
       comment: column.comment ?? "",
     };
@@ -291,6 +293,18 @@ export const MYSQL_COLUMN_TYPE_OPTIONS = [
   "LONGBLOB",
 ];
 
+export const SQLITE_COLUMN_TYPE_OPTIONS = [
+  "INTEGER",
+  "REAL",
+  "TEXT",
+  "BLOB",
+  "NUMERIC",
+  "BOOLEAN",
+  "DATE",
+  "DATETIME",
+  "JSON",
+];
+
 export const TABLE_DESIGN_SECTIONS = [
   { key: "fields", label: "字段" },
   { key: "indexes", label: "索引" },
@@ -352,6 +366,10 @@ export function defaultDesignCheck() {
 }
 
 export function buildTableDesignSql(tab, state) {
+  if (tab.engine === "sqlite") {
+    return state.mode === "create" ? buildSqliteCreateTableSql(tab, state) : buildSqliteAlterTableSql(tab, state);
+  }
+
   return state.mode === "create" ? buildCreateTableSql(tab, state) : buildAlterTableSql(tab, state);
 }
 
@@ -450,6 +468,166 @@ function triggerStatement(tab, trigger) {
     throw new Error("触发器所属表不能为空");
   }
   return `CREATE TRIGGER ${quoteIdentifier(tab.schema)}.${quoteIdentifier(name)}\n${trigger.timing} ${trigger.event} ON ${quoteIdentifier(tab.schema)}.${quoteIdentifier(tableName)}\nFOR EACH ROW\n${statement};`;
+}
+
+function sqliteColumnDefinition(column) {
+  const name = normalizeSqlIdentifier(column.name);
+  const parsedType = parseColumnType(column.typeName);
+  const typeName = parsedType.typeName || "TEXT";
+  const length = String(column.length || parsedType.length || "").trim();
+  const scale = String(column.scale || parsedType.scale || "").trim();
+  const type = length ? `${typeName}(${scale ? `${length},${scale}` : length})` : typeName;
+  if (!name || !type) {
+    throw new Error("字段名称和类型不能为空");
+  }
+
+  return [
+    quoteIdentifier(name),
+    type,
+    column.primary && column.autoIncrement ? "PRIMARY KEY AUTOINCREMENT" : "",
+    !column.primary && !column.nullable ? "NOT NULL" : "",
+    defaultClause(column.defaultValue),
+  ].filter(Boolean).join(" ");
+}
+
+function sqliteIndexStatement(tableName, index) {
+  const name = normalizeSqlIdentifier(index.name);
+  const columns = indexColumns(index.columns);
+  if (!name || columns.length === 0) {
+    throw new Error("索引名称和字段不能为空");
+  }
+  return `CREATE ${index.unique ? "UNIQUE " : ""}INDEX ${quoteIdentifier(name)} ON ${quoteIdentifier(tableName)} (${columns.map(quoteIdentifier).join(", ")});`;
+}
+
+function sqliteForeignKeyDefinition(foreignKey) {
+  const columns = indexColumns(foreignKey.columns);
+  const referencedTable = normalizeSqlIdentifier(foreignKey.referencedTable);
+  const referencedColumns = indexColumns(foreignKey.referencedColumns);
+  if (columns.length === 0 || !referencedTable || referencedColumns.length === 0) {
+    throw new Error("外键字段、引用表和引用字段不能为空");
+  }
+  return [
+    `FOREIGN KEY (${columns.map(quoteIdentifier).join(", ")})`,
+    `REFERENCES ${quoteIdentifier(referencedTable)} (${referencedColumns.map(quoteIdentifier).join(", ")})`,
+    foreignKey.onDelete ? `ON DELETE ${foreignKey.onDelete}` : "",
+    foreignKey.onUpdate ? `ON UPDATE ${foreignKey.onUpdate}` : "",
+  ].filter(Boolean).join(" ");
+}
+
+function sqliteCheckDefinition(check) {
+  const expression = String(check.expression ?? "").trim();
+  if (!expression) {
+    throw new Error("检查表达式不能为空");
+  }
+  return `CHECK (${expression})`;
+}
+
+function sqliteTriggerStatement(tab, trigger) {
+  const name = normalizeSqlIdentifier(trigger.name);
+  const statement = String(trigger.statement ?? "").trim();
+  const tableName = normalizeSqlIdentifier(tab.tableName || tab.table);
+  if (!name || !statement || !tableName) {
+    throw new Error("触发器名称、所属表和语句不能为空");
+  }
+  if (/^\s*CREATE\s+TRIGGER/i.test(statement)) {
+    return statement.endsWith(";") ? statement : `${statement};`;
+  }
+  return `CREATE TRIGGER ${quoteIdentifier(name)}\n${trigger.timing} ${trigger.event} ON ${quoteIdentifier(tableName)}\nBEGIN\n${statement}\nEND;`;
+}
+
+export function buildSqliteCreateTableSql(tab, state) {
+  const tableName = normalizeSqlIdentifier(state.tableName);
+  if (!tableName) {
+    throw new Error("表名不能为空");
+  }
+
+  const activeColumns = state.columns.filter((column) => !column.dropped);
+  if (activeColumns.length === 0) {
+    throw new Error("至少需要一个字段");
+  }
+
+  const definitions = activeColumns.map(sqliteColumnDefinition);
+  const primaryColumns = activeColumns
+    .filter((column) => column.primary && !column.autoIncrement)
+    .map((column) => quoteIdentifier(column.name));
+  if (primaryColumns.length > 0) {
+    definitions.push(`PRIMARY KEY (${primaryColumns.join(", ")})`);
+  }
+  for (const column of activeColumns.filter((item) => item.key === "UNIQUE")) {
+    definitions.push(`UNIQUE (${quoteIdentifier(column.name)})`);
+  }
+  for (const foreignKey of state.foreignKeys.filter((item) => !item.dropped)) {
+    definitions.push(sqliteForeignKeyDefinition(foreignKey));
+  }
+  for (const check of state.checks.filter((item) => !item.dropped)) {
+    definitions.push(sqliteCheckDefinition(check));
+  }
+
+  const statements = [`CREATE TABLE ${quoteIdentifier(tableName)} (\n  ${definitions.join(",\n  ")}\n);`];
+  for (const column of activeColumns.filter((item) => item.key === "INDEX")) {
+    statements.push(`CREATE INDEX ${quoteIdentifier(`idx_${column.name}`)} ON ${quoteIdentifier(tableName)} (${quoteIdentifier(column.name)});`);
+  }
+  for (const index of state.indexes.filter((item) => !item.dropped)) {
+    statements.push(sqliteIndexStatement(tableName, index));
+  }
+  for (const trigger of state.triggers.filter((item) => !item.dropped)) {
+    statements.push(sqliteTriggerStatement({ ...tab, tableName }, trigger));
+  }
+  return statements;
+}
+
+export function buildSqliteAlterTableSql(tab, state) {
+  const tableName = normalizeSqlIdentifier(state.tableName);
+  if (!tableName) {
+    throw new Error("表名不能为空");
+  }
+
+  const statements = [];
+  let currentTableName = state.originalTable;
+  if (tableName !== state.originalTable) {
+    statements.push(`ALTER TABLE ${quoteIdentifier(state.originalTable)} RENAME TO ${quoteIdentifier(tableName)};`);
+    currentTableName = tableName;
+  }
+
+  for (const column of state.columns) {
+    if (column.original && column.dropped) {
+      statements.push(`ALTER TABLE ${quoteIdentifier(currentTableName)} DROP COLUMN ${quoteIdentifier(column.originalName)};`);
+    } else if (!column.original && !column.dropped) {
+      statements.push(`ALTER TABLE ${quoteIdentifier(currentTableName)} ADD COLUMN ${sqliteColumnDefinition(column)};`);
+    } else if (column.original && !column.dropped && isColumnChanged(column)) {
+      if (column.name !== column.originalName) {
+        statements.push(`ALTER TABLE ${quoteIdentifier(currentTableName)} RENAME COLUMN ${quoteIdentifier(column.originalName)} TO ${quoteIdentifier(column.name)};`);
+      } else {
+        throw new Error("SQLite 修改字段类型、默认值或约束需要重建表，请使用 SQL 预览手动迁移");
+      }
+    }
+  }
+
+  for (const index of state.indexes) {
+    if (index.original && (index.dropped || isIndexChanged(index))) {
+      statements.push(`DROP INDEX IF EXISTS ${quoteIdentifier(index.originalName)};`);
+    }
+    if (!index.dropped && (!index.original || isIndexChanged(index))) {
+      statements.push(sqliteIndexStatement(currentTableName, index));
+    }
+  }
+
+  if (state.foreignKeys.some((key) => key.dropped || !key.original || isForeignKeyChanged(key))
+    || state.checks.some((check) => check.dropped || !check.original || isCheckChanged(check))
+    || !samePrimaryKey(state)) {
+    throw new Error("SQLite 修改主键、外键或检查约束需要重建表，请使用 SQL 预览手动迁移");
+  }
+
+  for (const trigger of state.triggers) {
+    if (trigger.original && (trigger.dropped || isTriggerChanged(trigger))) {
+      statements.push(`DROP TRIGGER IF EXISTS ${quoteIdentifier(trigger.originalName)};`);
+    }
+    if (!trigger.dropped && (!trigger.original || isTriggerChanged(trigger))) {
+      statements.push(sqliteTriggerStatement({ ...tab, tableName: currentTableName }, trigger));
+    }
+  }
+
+  return statements;
 }
 
 export function buildCreateTableSql(tab, state) {

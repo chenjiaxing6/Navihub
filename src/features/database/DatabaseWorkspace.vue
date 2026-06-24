@@ -12,9 +12,16 @@ import DatabaseResultFooter from "./DatabaseResultFooter.vue";
 import DatabaseSearchBar from "./DatabaseSearchBar.vue";
 import DatabaseVirtualTable from "./DatabaseVirtualTable.vue";
 import TableDesigner from "./TableDesigner.vue";
-import { describeMysqlTable, executeMysqlQuery } from "./mysqlApi";
-import { ensureMysqlConnection, formatMysqlMeta } from "./databaseDefaults";
-import { SQL_COMPLETION_KEYWORDS, defaultQuerySql, quoteIdentifier, quoteString } from "./databaseQueryUtils";
+import { describeDatabaseTable, executeDatabaseQuery } from "./databaseApi";
+import { ensureMysqlConnection, formatDatabaseMeta } from "./databaseDefaults";
+import { SQL_COMPLETION_KEYWORDS, defaultQuerySql, quoteString } from "./databaseQueryUtils";
+import {
+  isSqliteEngine,
+  nullSafeEquals,
+  qualifiedTableName,
+  quoteDatabaseIdentifier,
+  sqlValueLiteral,
+} from "./databaseDialect";
 import {
   buildTableDesignSql,
   applyOptionsFromTableDetail,
@@ -37,6 +44,7 @@ import {
   copyTextForRows,
   emptyCellRange,
   emptyRowRange,
+  formatBooleanText,
   formatCellValue,
   formatDataLength,
   formatRowCount,
@@ -266,6 +274,9 @@ const activeSchemaTables = computed(() => {
       rowCount: schemaTableCounts.value[schemaTableCountKey(schema.name, name)]
         ?? metadata.rowCount
         ?? (typeof item === "string" ? 0 : item.rowCount),
+      rootPage: metadata.rootPage ?? (typeof item === "string" ? 0 : item.rootPage),
+      hasIndex: metadata.hasIndex ?? (typeof item === "string" ? false : item.hasIndex),
+      hasTrigger: metadata.hasTrigger ?? (typeof item === "string" ? false : item.hasTrigger),
       dataLength: metadata.dataLength ?? (typeof item === "string" ? 0 : item.dataLength),
       engine: metadata.engine ?? (typeof item === "string" ? "" : item.engine),
       createTime: metadata.createTime ?? (typeof item === "string" ? "" : item.createTime),
@@ -303,6 +314,7 @@ const activeResult = computed(() => {
 const shouldShowResultPanel = computed(() => (
   props.activeTopTab?.kind === "table" || Boolean(activeResult.value)
 ));
+const hasResultColumns = computed(() => tableColumns.value.length > 0);
 const activeEditState = computed(() => {
   const tabId = props.activeTopTab?.id;
   return tabId ? tableEditStates.value[tabId] ?? null : null;
@@ -343,11 +355,17 @@ const activeDdlTitle = computed(() => {
 const tableColumns = computed(() => {
   const tabId = props.activeTopTab?.id;
   const widths = tabId ? tableColumnWidths.value[tabId] ?? {} : {};
+  const result = activeResult.value;
+  const tableDetail = result?.schema && result?.table
+    ? tableDetailCache.value[tableDetailCacheKey(result.schema, result.table)]
+    : null;
+  const detailColumns = new Map((tableDetail?.columns ?? []).map((column) => [column.name, column]));
   const columns = (activeResult.value?.columns ?? []).filter((column) => column !== "__myhubRowId");
   const baseColumns = columns.map((column) => ({
     key: column,
     label: column,
     width: columnMinWidth(column),
+    ...editorMetaForColumn(detailColumns.get(column)),
   }));
 
   return baseColumns.map((column) => ({
@@ -359,7 +377,12 @@ const tableColumns = computed(() => {
 const schemaTableColumns = computed(() => {
   const tabId = props.activeTopTab?.id;
   const widths = tabId ? tableColumnWidths.value[tabId] ?? {} : {};
-  const columns = [
+  const columns = isSqliteEngine(normalizedConnection.value) ? [
+    { key: "name", label: "名称", width: 300 },
+    { key: "rowCount", label: "行数", width: 140, align: "right", formatter: formatRowCount },
+    { key: "hasIndex", label: "有索引", width: 160, formatter: formatBooleanText },
+    { key: "hasTrigger", label: "有触发器", width: 170, formatter: formatBooleanText },
+  ] : [
     { key: "name", label: "名称", width: 240 },
     { key: "rowCount", label: "行", width: 110, align: "right" },
     { key: "dataLength", label: "数据长度", width: 140, align: "right", formatter: formatDataLength },
@@ -513,19 +536,109 @@ const copyContextItems = computed(() => {
 
 function currentConfig() {
   return {
+    engine: normalizedConnection.value.config.engine ?? "mysql",
     host: form.host,
     port: Number(form.port),
     username: form.username,
     password: form.password,
     database: form.database,
+    path: normalizedConnection.value.config.path ?? "",
+    readOnly: Boolean(normalizedConnection.value.config.readOnly),
   };
+}
+
+function activeConnectionForApi() {
+  return {
+    ...normalizedConnection.value,
+    config: currentConfig(),
+  };
+}
+
+function quoteDbIdentifier(value) {
+  return quoteDatabaseIdentifier(normalizedConnection.value, value);
+}
+
+function tableNameSql(schema, table) {
+  return qualifiedTableName(normalizedConnection.value, schema, table);
+}
+
+function editorMetaForColumn(column) {
+  if (isSqliteEngine(normalizedConnection.value) || !column?.columnType) {
+    return {};
+  }
+
+  const type = String(column.columnType).toLowerCase();
+  if (type.startsWith("date") && !type.startsWith("datetime")) {
+    return { dataType: type, editor: "date" };
+  }
+  if (type.startsWith("datetime") || type.startsWith("timestamp")) {
+    return { dataType: type, editor: "datetime-local" };
+  }
+  if (type.startsWith("time")) {
+    return { dataType: type, editor: "time" };
+  }
+  if (type.startsWith("year")) {
+    return { dataType: type, editor: "number" };
+  }
+
+  return { dataType: type };
+}
+
+function editorValueForCell(value, column) {
+  if (value === null || value === undefined) {
+    return "";
+  }
+
+  const text = String(value);
+  if (column.editor === "datetime-local") {
+    return text.replace(" ", "T").slice(0, 19);
+  }
+  if (column.editor === "date") {
+    return text.slice(0, 10);
+  }
+  if (column.editor === "time") {
+    return text.slice(0, 8);
+  }
+  return text;
+}
+
+function commitValueForCell(value, column) {
+  if (value === "") {
+    return "";
+  }
+  if (column.editor === "datetime-local") {
+    return String(value).replace("T", " ");
+  }
+  return value;
+}
+
+function singleRowLimitSql() {
+  return isSqliteEngine(normalizedConnection.value) ? "" : " LIMIT 1";
+}
+
+function executeQuery(database, sql) {
+  return executeDatabaseQuery(activeConnectionForApi(), database, sql);
+}
+
+function querySuccessMessage(result) {
+  const rows = Array.isArray(result?.rows) ? result.rows.length : 0;
+  if (rows > 0) {
+    return `查询成功，返回 ${rows} 行`;
+  }
+
+  const affectedRows = Number(result?.affectedRows ?? 0);
+  return affectedRows > 0 ? `执行成功，影响 ${affectedRows} 行` : "执行成功";
+}
+
+function describeTable(database, table) {
+  return describeDatabaseTable(activeConnectionForApi(), database, table);
 }
 
 function persistConfig(extra = {}) {
   const config = currentConfig();
   emit("update-connection", {
     name: form.name || "未命名连接",
-    meta: formatMysqlMeta(config),
+    meta: formatDatabaseMeta(config),
     config,
     ...extra,
   });
@@ -647,7 +760,7 @@ async function loadQueryColumnCompletions(schemaName) {
     for (let index = workerIndex; index < objects.length; index += 4) {
       const table = objects[index];
       try {
-        const detail = await describeMysqlTable(currentConfig(), schemaName, table);
+        const detail = await describeTable(schemaName, table);
         for (const column of detail.columns ?? []) {
           const existing = unqualifiedColumns.get(column.name);
           unqualifiedColumns.set(column.name, {
@@ -1480,8 +1593,9 @@ function markRowChanged(row) {
     return;
   }
 
+  const tabId = props.activeTopTab?.id;
   const state = ensureActiveEditState();
-  if (!state) {
+  if (!tabId || !state) {
     return;
   }
 
@@ -1497,6 +1611,10 @@ function markRowChanged(row) {
   } else {
     state.updatedRows.set(rowId, current);
   }
+  setEditState(tabId, {
+    ...state,
+    updatedRows: new Map(state.updatedRows),
+  });
 }
 
 function isNewResultRow(row) {
@@ -1533,30 +1651,8 @@ function setResultCellValue(row, column, value) {
   const nextRow = { ...resultRows[rowIndex], [column.key]: value };
   const nextRows = [...resultRows];
   nextRows[rowIndex] = nextRow;
-  updateActiveRows(nextRows);
   markRowChanged(nextRow);
-}
-
-function mysqlValueLiteral(value) {
-  if (value === null || value === undefined) {
-    return "NULL";
-  }
-  if (value instanceof Date) {
-    return quoteString(value.toISOString());
-  }
-  if (typeof value === "number") {
-    return Number.isFinite(value) ? String(value) : "NULL";
-  }
-  if (typeof value === "bigint") {
-    return String(value);
-  }
-  if (typeof value === "boolean") {
-    return value ? "1" : "0";
-  }
-  if (typeof value === "object") {
-    return quoteString(JSON.stringify(value));
-  }
-  return quoteString(value);
+  updateActiveRows(nextRows);
 }
 
 function activeTableNameSql() {
@@ -1565,7 +1661,7 @@ function activeTableNameSql() {
   if (!target?.schema || !target?.table) {
     return "";
   }
-  return `${quoteIdentifier(target.schema)}.${quoteIdentifier(target.table)}`;
+  return tableNameSql(target.schema, target.table);
 }
 
 function tableDetailCacheKey(schema, table) {
@@ -1583,7 +1679,7 @@ async function loadActiveTableDetail() {
     return tableDetailCache.value[cacheKey];
   }
 
-  const detail = await describeMysqlTable(currentConfig(), target.schema, target.table);
+  const detail = await describeTable(target.schema, target.table);
   tableDetailCache.value = {
     ...tableDetailCache.value,
     [cacheKey]: detail,
@@ -1648,16 +1744,24 @@ function activeDeleteTarget() {
 }
 
 function primaryKeyColumns(detail) {
-  return (detail?.indexes ?? [])
+  const indexedPrimary = (detail?.indexes ?? [])
     .filter((index) => index.name === "PRIMARY")
     .sort((left, right) => Number(left.seqInIndex ?? 0) - Number(right.seqInIndex ?? 0))
     .map((index) => index.columnName)
+    .filter(Boolean);
+  if (indexedPrimary.length > 0) {
+    return indexedPrimary;
+  }
+
+  return (detail?.columns ?? [])
+    .filter((column) => column.key === "PRI")
+    .map((column) => column.name)
     .filter(Boolean);
 }
 
 function rowWhereClause(row, columns) {
   return columns
-    .map((column) => `${quoteIdentifier(column)} <=> ${mysqlValueLiteral(row[column])}`)
+    .map((column) => nullSafeEquals(normalizedConnection.value, column, row[column]))
     .join(" AND ");
 }
 
@@ -1706,12 +1810,12 @@ async function copyGeneratedSql(kind) {
     const whereColumns = primaryKeyColumns(detail);
     const sql = rows.map((row) => {
       if (kind === "insert") {
-        const columnSql = columns.map(quoteIdentifier).join(", ");
-        const valueSql = columns.map((column) => mysqlValueLiteral(row[column])).join(", ");
+        const columnSql = columns.map(quoteDbIdentifier).join(", ");
+        const valueSql = columns.map((column) => sqlValueLiteral(row[column])).join(", ");
         return `INSERT INTO ${tableName} (${columnSql}) VALUES (${valueSql});`;
       }
 
-      const setSql = columns.map((column) => `${quoteIdentifier(column)} = ${mysqlValueLiteral(row[column])}`).join(", ");
+      const setSql = columns.map((column) => `${quoteDbIdentifier(column)} = ${sqlValueLiteral(row[column])}`).join(", ");
       const whereSql = whereColumns.length > 0 ? rowWhereClause(row, whereColumns) : rowWhereClause(row, tableColumns.value.map((column) => column.key));
       return `UPDATE ${tableName} SET ${setSql} WHERE ${whereSql};`;
     }).join("\n");
@@ -1810,8 +1914,8 @@ async function deleteSelectedRecords() {
       if (operationToken !== tableOperationToken) {
         return;
       }
-      const sql = `DELETE FROM ${tableName} WHERE ${rowWhereClause(row, keyColumns)} LIMIT 1;`;
-      await executeMysqlQuery(currentConfig(), activeResult.value.schema, sql);
+      const sql = `DELETE FROM ${tableName} WHERE ${rowWhereClause(row, keyColumns)}${singleRowLimitSql()};`;
+      await executeQuery(activeResult.value.schema, sql);
     }
     if (operationToken !== tableOperationToken) {
       return;
@@ -1858,7 +1962,10 @@ function addResultRow() {
 
   const row = Object.fromEntries(tableColumns.value.map((column) => [column.key, null]));
   row.__myhubRowId = `new-${newRowSequence += 1}`;
-  state.newRows.push(row.__myhubRowId);
+  setEditState(props.activeTopTab.id, {
+    ...state,
+    newRows: [...state.newRows, row.__myhubRowId],
+  });
   const nextRows = [...(activeResult.value?.rows ?? [])];
   const insertIndex = selectedResultInsertIndex();
   nextRows.splice(insertIndex, 0, row);
@@ -1923,8 +2030,8 @@ async function commitTableChanges() {
       }
       const values = publicRow(row);
       const columns = Object.keys(values);
-      const sql = `INSERT INTO ${tableName} (${columns.map(quoteIdentifier).join(", ")}) VALUES (${columns.map((column) => mysqlValueLiteral(values[column])).join(", ")});`;
-      await executeMysqlQuery(currentConfig(), result.schema, sql);
+      const sql = `INSERT INTO ${tableName} (${columns.map(quoteDbIdentifier).join(", ")}) VALUES (${columns.map((column) => sqlValueLiteral(values[column])).join(", ")});`;
+      await executeQuery(result.schema, sql);
       if (operationToken !== tableOperationToken) {
         return;
       }
@@ -1945,9 +2052,9 @@ async function commitTableChanges() {
       if (changedColumns.length === 0) {
         continue;
       }
-      const setSql = changedColumns.map((column) => `${quoteIdentifier(column)} = ${mysqlValueLiteral(row[column])}`).join(", ");
-      const sql = `UPDATE ${tableName} SET ${setSql} WHERE ${rowWhereClause(original, keyColumns)} LIMIT 1;`;
-      await executeMysqlQuery(currentConfig(), result.schema, sql);
+      const setSql = changedColumns.map((column) => `${quoteDbIdentifier(column)} = ${sqlValueLiteral(row[column])}`).join(", ");
+      const sql = `UPDATE ${tableName} SET ${setSql} WHERE ${rowWhereClause(original, keyColumns)}${singleRowLimitSql()};`;
+      await executeQuery(result.schema, sql);
       if (operationToken !== tableOperationToken) {
         return;
       }
@@ -1990,7 +2097,7 @@ function startCellEdit(rowIndex, columnIndex) {
   editingCell.value = {
     rowId: rowInternalId(row),
     columnKey: column.key,
-    value: row[column.key] ?? "",
+    value: editorValueForCell(row[column.key], column),
   };
   nextTick(() => {
     const input = tableViewportElement(tableViewport)?.querySelector(".virtual-table__cell-input");
@@ -2008,7 +2115,7 @@ function commitCellEdit() {
   const row = (activeResult.value?.rows ?? []).find((item) => rowInternalId(item) === edit.rowId);
   const column = tableColumns.value.find((item) => item.key === edit.columnKey);
   if (row && column) {
-    setResultCellValue(row, column, edit.value);
+    setResultCellValue(row, column, commitValueForCell(edit.value, column));
   }
   editingCell.value = null;
 }
@@ -2215,7 +2322,7 @@ async function ensureTableDesignState(tab = props.activeTopTab) {
 
   loading.value = true;
   try {
-    const detail = await describeMysqlTable(currentConfig(), tab.schema, tab.table);
+    const detail = await describeTable(tab.schema, tab.table);
     applyOptionsFromTableDetail(state, detail);
     tableDesignStates.value = {
       ...tableDesignStates.value,
@@ -2254,7 +2361,7 @@ async function saveTableDesign() {
 
     state.saving = true;
     for (const statement of statements) {
-      await executeMysqlQuery(currentConfig(), tab.schema, statement);
+      await executeQuery(tab.schema, statement);
     }
     markDesignStateSaved(state);
     ElMessage.success(wasCreate ? "表已创建" : "表结构已保存");
@@ -2351,16 +2458,24 @@ async function loadTableData(schema, table, tabId = props.activeTopTab?.id, opti
   const operationToken = tableOperationToken += 1;
 
   loading.value = true;
-  const tableName = `${quoteIdentifier(schema)}.${quoteIdentifier(table)}`;
+  const tableName = tableNameSql(schema, table);
   const sql = `SELECT *\nFROM ${tableName}\nLIMIT ${pageSize} OFFSET ${offset};`;
   const countSql = `SELECT COUNT(*) AS total\nFROM ${tableName};`;
   try {
-    const [result, countResult] = await Promise.all([
-      executeMysqlQuery(currentConfig(), schema, sql),
-      executeMysqlQuery(currentConfig(), schema, countSql),
+    const cacheKey = tableDetailCacheKey(schema, table);
+    const [result, countResult, detail] = await Promise.all([
+      executeQuery(schema, sql),
+      executeQuery(schema, countSql),
+      tableDetailCache.value[cacheKey] ? Promise.resolve(tableDetailCache.value[cacheKey]) : describeTable(schema, table),
     ]);
     if (operationToken !== tableOperationToken) {
       return;
+    }
+    if (!tableDetailCache.value[cacheKey]) {
+      tableDetailCache.value = {
+        ...tableDetailCache.value,
+        [cacheKey]: detail,
+      };
     }
     const totalRows = Number(countResult.rows?.[0]?.total ?? 0);
     const rows = editableRows(result.rows ?? []);
@@ -2409,7 +2524,7 @@ async function executeActiveQuery() {
   const operationToken = tableOperationToken += 1;
   loading.value = true;
   try {
-    const result = await executeMysqlQuery(currentConfig(), tab.schema, sql);
+    const result = await executeQuery(tab.schema, sql);
     if (operationToken !== tableOperationToken) {
       return;
     }
@@ -2432,6 +2547,7 @@ async function executeActiveQuery() {
     clearEditState(tab.id);
     resetTableScroll();
     saveTabViewState(tab.id);
+    ElMessage.success(querySuccessMessage(result));
   } catch (error) {
     if (operationToken === tableOperationToken) {
       ElMessage.error(`执行查询失败：${error}`);
@@ -2495,8 +2611,8 @@ async function loadSchemaTableCounts(schema) {
   const workers = Array.from({ length: Math.min(4, missingTables.length) }, async (_, workerIndex) => {
     for (let index = workerIndex; index < missingTables.length; index += 4) {
       const table = missingTables[index];
-      const sql = `SELECT COUNT(*) AS total\nFROM ${quoteIdentifier(schema.name)}.${quoteIdentifier(table)};`;
-      const result = await executeMysqlQuery(currentConfig(), schema.name, sql);
+      const sql = `SELECT COUNT(*) AS total\nFROM ${tableNameSql(schema.name, table)};`;
+      const result = await executeQuery(schema.name, sql);
       nextCounts[schemaTableCountKey(schema.name, table)] = Number(result.rows?.[0]?.total ?? 0);
     }
   });
@@ -2516,6 +2632,27 @@ async function loadSchemaTableMetadata(schema) {
     return;
   }
 
+  if (isSqliteEngine(normalizedConnection.value)) {
+    const nextMetadata = { ...schemaTableMetadata.value };
+    for (const item of tableGroup?.items ?? []) {
+      const name = typeof item === "string" ? item : item.name;
+      nextMetadata[schemaTableCountKey(schema.name, name)] = {
+        rowCount: typeof item === "string" ? 0 : Number(item.rowCount ?? 0),
+        rootPage: typeof item === "string" ? 0 : Number(item.rootPage ?? 0),
+        hasIndex: typeof item === "string" ? false : Boolean(item.hasIndex),
+        hasTrigger: typeof item === "string" ? false : Boolean(item.hasTrigger),
+        dataLength: typeof item === "string" ? 0 : Number(item.dataLength ?? 0),
+        engine: "SQLite",
+        createTime: "",
+        updateTime: "",
+        collation: "",
+        comment: typeof item === "string" ? "" : item.comment ?? "",
+      };
+    }
+    schemaTableMetadata.value = nextMetadata;
+    return;
+  }
+
   const sql = `SELECT
     TABLE_NAME AS name,
     TABLE_ROWS AS rowCount,
@@ -2531,7 +2668,7 @@ async function loadSchemaTableMetadata(schema) {
   ORDER BY TABLE_NAME;`;
 
   try {
-    const result = await executeMysqlQuery(currentConfig(), "information_schema", sql);
+    const result = await executeQuery("information_schema", sql);
     const nextMetadata = { ...schemaTableMetadata.value };
     for (const row of result.rows ?? []) {
       nextMetadata[schemaTableCountKey(schema.name, row.name)] = {
@@ -2552,6 +2689,45 @@ async function loadSchemaTableMetadata(schema) {
 
 async function loadSchemaDiagramData(schema) {
   if (!schema?.name || schemaRelationships.value[schema.name]) {
+    return;
+  }
+
+  if (isSqliteEngine(normalizedConnection.value)) {
+    const tableGroup = schema?.groups?.find((group) => (group.groupType ?? group.type) === "table");
+    const tables = tableGroup?.items?.map((item) => (typeof item === "string" ? item : item.name)).filter(Boolean) ?? [];
+    const columnsByTable = {};
+    const relationships = [];
+
+    try {
+      await Promise.all(tables.map(async (table) => {
+        const detail = await describeTable(schema.name, table);
+        columnsByTable[table] = (detail.columns ?? []).map((column) => ({
+          name: column.name ?? "",
+          type: column.columnType ?? "",
+          primary: column.key === "PRI",
+          indexed: column.key === "MUL" || column.key === "UNI" || column.key === "PRI",
+        }));
+        for (const key of detail.foreignKeys ?? []) {
+          relationships.push({
+            name: key.name ?? "",
+            table,
+            column: key.columnName ?? "",
+            referencedTable: key.referencedTable ?? "",
+            referencedColumn: key.referencedColumn ?? "",
+          });
+        }
+      }));
+      schemaColumns.value = {
+        ...schemaColumns.value,
+        [schema.name]: columnsByTable,
+      };
+      schemaRelationships.value = {
+        ...schemaRelationships.value,
+        [schema.name]: relationships,
+      };
+    } catch (error) {
+      ElMessage.error(`加载 ER 图失败：${error}`);
+    }
     return;
   }
 
@@ -2576,8 +2752,8 @@ async function loadSchemaDiagramData(schema) {
 
   try {
     const [relationshipResult, columnResult] = await Promise.all([
-      executeMysqlQuery(currentConfig(), "information_schema", relationSql),
-      executeMysqlQuery(currentConfig(), "information_schema", columnSql),
+      executeQuery("information_schema", relationSql),
+      executeQuery("information_schema", columnSql),
     ]);
     const columnsByTable = {};
     for (const row of columnResult.rows ?? []) {
@@ -2746,6 +2922,7 @@ function handlePageChange(page) {
 
       <TableDesigner
         v-else-if="activeTopTab.kind === 'table-design'"
+        :engine="activeTopTab.engine ?? 'mysql'"
         :schema="activeTopTab.schema"
         :sql-error="activeDesignSqlPreview.error"
         :sql-preview="activeDesignSqlPreview.sql"
@@ -2785,6 +2962,7 @@ function handlePageChange(page) {
         />
         <div v-if="shouldShowResultPanel" class="result-area">
           <DatabaseVirtualTable
+            v-if="hasResultColumns"
             ref="tableViewport"
             row-key-prefix="result"
             :columns="tableColumns"
@@ -2815,6 +2993,10 @@ function handlePageChange(page) {
             @cancel-edit="cancelCellEdit"
             @update-edit-value="editingCell.value = $event"
           />
+          <div v-else class="query-execution-summary">
+            <strong>{{ querySuccessMessage(activeResult) }}</strong>
+            <span>{{ activeResult?.elapsedMs ?? 0 }}ms</span>
+          </div>
           <DatabaseDdlPanel
             v-if="shouldShowDdlPanel"
             :open="ddlPanelOpen"
@@ -2974,5 +3156,26 @@ function handlePageChange(page) {
   min-height: 0;
   flex: 1;
   overflow: hidden;
+}
+
+.query-execution-summary {
+  display: grid;
+  place-content: center;
+  justify-items: center;
+  gap: 6px;
+  min-width: 0;
+  flex: 1;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.query-execution-summary strong {
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 720;
+}
+
+.query-execution-summary span {
+  color: var(--faint);
 }
 </style>

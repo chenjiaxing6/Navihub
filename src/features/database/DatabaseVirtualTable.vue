@@ -50,6 +50,10 @@ function renderedRows(propsRows, visibleRows) {
 function spacerHeight(visibleRows, key) {
   return visibleRows ? `${visibleRows[key]}px` : "0px";
 }
+
+function editorInputType(column) {
+  return column.editor ?? "text";
+}
 </script>
 
 <template>
@@ -125,7 +129,7 @@ function spacerHeight(visibleRows, key) {
                 v-else-if="isEditingCell(row, column)"
                 :value="editingCell?.value ?? ''"
                 class="virtual-table__cell-input"
-                type="text"
+                :type="editorInputType(column)"
                 autofocus
                 @input="emit('update-edit-value', $event.target.value)"
                 @mousedown.stop

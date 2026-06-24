@@ -13,6 +13,21 @@ import {
   renameMysqlTable,
   truncateMysqlTable,
 } from "./mysqlAdminApi";
+import {
+  analyzeSqliteDatabase,
+  checkSqliteIntegrity,
+  copySqliteTable,
+  dropSqliteTable,
+  emptySqliteTable,
+  exportSqliteDatabaseSql,
+  exportSqliteTablesSql,
+  getSqliteDatabaseInfo,
+  importSqliteSql,
+  reindexSqliteDatabase,
+  renameSqliteTable,
+  truncateSqliteTable,
+  vacuumSqliteDatabase,
+} from "./sqliteAdminApi";
 
 const promptOptions = {
   confirmButtonText: "确认",
@@ -34,12 +49,35 @@ const tableDataActionMeta = {
   "empty-table": {
     verb: "清空",
     message: "表数据已清空",
-    run: emptyMysqlTable,
+    mysql: emptyMysqlTable,
+    sqlite: emptySqliteTable,
   },
   "truncate-table": {
     verb: "截断",
     message: "表已截断",
-    run: truncateMysqlTable,
+    mysql: truncateMysqlTable,
+    sqlite: truncateSqliteTable,
+  },
+};
+
+const adminByEngine = {
+  mysql: {
+    copyTable: copyMysqlTable,
+    dropDatabase: dropMysqlDatabase,
+    dropTable: dropMysqlTable,
+    exportDatabaseSql: exportMysqlDatabaseSql,
+    exportTablesSql: exportMysqlTablesSql,
+    importSql: importMysqlSql,
+    renameTable: renameMysqlTable,
+  },
+  sqlite: {
+    copyTable: copySqliteTable,
+    dropDatabase: null,
+    dropTable: dropSqliteTable,
+    exportDatabaseSql: exportSqliteDatabaseSql,
+    exportTablesSql: exportSqliteTablesSql,
+    importSql: importSqliteSql,
+    renameTable: renameSqliteTable,
   },
 };
 
@@ -98,6 +136,8 @@ export async function runDatabaseObjectAction(payload) {
   }
 
   const config = payload.connection.config;
+  const engine = config.engine === "sqlite" ? "sqlite" : "mysql";
+  const admin = adminByEngine[engine];
   const schemaName = payload.schema?.name ?? payload.schema;
   const tableName = payload.table?.name ?? payload.table;
   const tableNames = Array.isArray(payload.tables) ? [...new Set(payload.tables.filter(Boolean))] : [];
@@ -113,7 +153,7 @@ export async function runDatabaseObjectAction(payload) {
       customClass: "bruno-message-box",
       dangerouslyUseHTMLString: false,
     });
-    await importMysqlSql(config, schemaName, sql);
+    await admin.importSql(config, schemaName, sql);
     ElMessage.success("SQL 已导入");
     return { changed: true, type: "import-sql", database: schemaName };
   }
@@ -121,7 +161,7 @@ export async function runDatabaseObjectAction(payload) {
   if (payload.action === "export-database-sql" && schemaName) {
     const path = await chooseDatabaseSqlExportPath(schemaName);
     if (!path) return null;
-    const sql = await exportMysqlDatabaseSql(config, schemaName, { includeData: true });
+    const sql = await admin.exportDatabaseSql(config, schemaName, { includeData: true });
     await writeTextFile(path, sql);
     ElMessage.success("库已导出");
     return { changed: false, type: "export-database-sql", database: schemaName };
@@ -129,7 +169,11 @@ export async function runDatabaseObjectAction(payload) {
 
   if (payload.action === "drop-database" && schemaName) {
     await ElMessageBox.confirm(`确认删除库“${schemaName}”？此操作会删除库内所有对象。`, "删除库", confirmOptions);
-    await dropMysqlDatabase(config, schemaName);
+    if (!admin.dropDatabase) {
+      ElMessage.warning("SQLite 不支持删除数据库，请删除连接或数据库文件");
+      return null;
+    }
+    await admin.dropDatabase(config, schemaName);
     ElMessage.success("库已删除");
     return { changed: true, type: "drop-database", database: schemaName };
   }
@@ -141,7 +185,7 @@ export async function runDatabaseObjectAction(payload) {
   if (payload.action === "rename-table" && schemaName && tableName) {
     const newTable = await promptName("输入新的表名称", "重命名表", tableName);
     if (!newTable || newTable === tableName) return null;
-    await renameMysqlTable(config, schemaName, tableName, newTable);
+    await admin.renameTable(config, schemaName, tableName, newTable);
     ElMessage.success("表已重命名");
     return { changed: true, type: "rename-table", database: schemaName, table: tableName, newTable };
   }
@@ -150,7 +194,7 @@ export async function runDatabaseObjectAction(payload) {
     const suffix = payload.action === "copy-table-data" ? "_copy" : "_struct";
     const newTable = await promptName("输入复制后的表名称", "复制表", `${tableName}${suffix}`);
     if (!newTable) return null;
-    await copyMysqlTable(config, schemaName, tableName, newTable, {
+    await admin.copyTable(config, schemaName, tableName, newTable, {
       copyData: payload.action === "copy-table-data",
     });
     ElMessage.success(payload.action === "copy-table-data" ? "表结构和数据已复制" : "表结构已复制");
@@ -161,7 +205,7 @@ export async function runDatabaseObjectAction(payload) {
     const targetTables = tableNames.length > 0 ? tableNames : [tableName];
     const path = await chooseSqlExportPath(schemaName, targetTables);
     if (!path) return null;
-    const sql = await exportMysqlTablesSql(config, schemaName, targetTables, { includeData: true });
+    const sql = await admin.exportTablesSql(config, schemaName, targetTables, { includeData: true });
     await writeTextFile(path, sql);
     ElMessage.success(targetTables.length > 1 ? `已导出 ${targetTables.length} 张表` : "表已导出");
     return {
@@ -181,7 +225,7 @@ export async function runDatabaseObjectAction(payload) {
       : `确认${meta.verb}表“${schemaName}.${targetTables[0]}”？此操作会删除表内所有数据。`;
     await ElMessageBox.confirm(confirmMessage, `${meta.verb}表`, confirmOptions);
     for (const table of targetTables) {
-      await meta.run(config, schemaName, table);
+      await meta[engine](config, schemaName, table);
     }
     ElMessage.success(meta.message);
     return {
@@ -196,7 +240,7 @@ export async function runDatabaseObjectAction(payload) {
   if (payload.action === "drop-table" && schemaName && tableNames.length > 1) {
     await ElMessageBox.confirm(`确认删除选中的 ${tableNames.length} 张表？`, "删除表", confirmOptions);
     for (const table of tableNames) {
-      await dropMysqlTable(config, schemaName, table);
+      await admin.dropTable(config, schemaName, table);
     }
     ElMessage.success("表已删除");
     return { changed: true, type: "drop-table", database: schemaName, tables: tableNames };
@@ -204,9 +248,45 @@ export async function runDatabaseObjectAction(payload) {
 
   if (payload.action === "drop-table" && schemaName && tableName) {
     await ElMessageBox.confirm(`确认删除表“${schemaName}.${tableName}”？`, "删除表", confirmOptions);
-    await dropMysqlTable(config, schemaName, tableName);
+    await admin.dropTable(config, schemaName, tableName);
     ElMessage.success("表已删除");
     return { changed: true, type: "drop-table", database: schemaName, table: tableName };
+  }
+
+  if (engine === "sqlite" && payload.action === "sqlite-vacuum") {
+    const result = await vacuumSqliteDatabase(config);
+    ElMessage.success(result.message || "VACUUM 已完成");
+    return { changed: true, type: "sqlite-vacuum", database: schemaName };
+  }
+
+  if (engine === "sqlite" && payload.action === "sqlite-integrity-check") {
+    const result = await checkSqliteIntegrity(config, { quick: false });
+    ElMessage[result.ok ? "success" : "warning"](result.message || "检查完成");
+    return { changed: false, type: "sqlite-integrity-check", database: schemaName };
+  }
+
+  if (engine === "sqlite" && payload.action === "sqlite-quick-check") {
+    const result = await checkSqliteIntegrity(config, { quick: true });
+    ElMessage[result.ok ? "success" : "warning"](result.message || "检查完成");
+    return { changed: false, type: "sqlite-quick-check", database: schemaName };
+  }
+
+  if (engine === "sqlite" && payload.action === "sqlite-analyze") {
+    const result = await analyzeSqliteDatabase(config);
+    ElMessage.success(result.message || "ANALYZE 已完成");
+    return { changed: false, type: "sqlite-analyze", database: schemaName };
+  }
+
+  if (engine === "sqlite" && payload.action === "sqlite-reindex") {
+    const result = await reindexSqliteDatabase(config);
+    ElMessage.success(result.message || "REINDEX 已完成");
+    return { changed: false, type: "sqlite-reindex", database: schemaName };
+  }
+
+  if (engine === "sqlite" && payload.action === "sqlite-database-info") {
+    const info = await getSqliteDatabaseInfo(config);
+    ElMessage.info(`SQLite ${Math.round((info.size ?? 0) / 1024)} KB · page ${info.pageSize} × ${info.pageCount}`);
+    return { changed: false, type: "sqlite-database-info", database: schemaName };
   }
 
   return null;

@@ -135,7 +135,10 @@ pub async fn monitor_kill_process(target: MonitorTarget, pid: u32) -> Result<(),
 }
 
 #[tauri::command]
-pub async fn monitor_stop_container(target: MonitorTarget, container_id: String) -> Result<(), String> {
+pub async fn monitor_stop_container(
+    target: MonitorTarget,
+    container_id: String,
+) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(move || {
         let runner = Runner::new(target)?;
         runner.run(&format!("docker stop {}", shell_arg(&container_id)))?;
@@ -146,7 +149,10 @@ pub async fn monitor_stop_container(target: MonitorTarget, container_id: String)
 }
 
 #[tauri::command]
-pub async fn monitor_start_container(target: MonitorTarget, container_id: String) -> Result<(), String> {
+pub async fn monitor_start_container(
+    target: MonitorTarget,
+    container_id: String,
+) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(move || {
         let runner = Runner::new(target)?;
         runner.run(&format!("docker start {}", shell_arg(&container_id)))?;
@@ -157,7 +163,10 @@ pub async fn monitor_start_container(target: MonitorTarget, container_id: String
 }
 
 #[tauri::command]
-pub async fn monitor_remove_container(target: MonitorTarget, container_id: String) -> Result<(), String> {
+pub async fn monitor_remove_container(
+    target: MonitorTarget,
+    container_id: String,
+) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(move || {
         let runner = Runner::new(target)?;
         runner.run(&format!("docker rm {}", shell_arg(&container_id)))?;
@@ -207,7 +216,11 @@ impl Runner {
 
     fn run(&self, script: &str) -> Result<CommandOutput, String> {
         if self.target.kind == "ssh" {
-            let config = self.target.ssh.as_ref().ok_or_else(|| "缺少 SSH 连接配置".to_string())?;
+            let config = self
+                .target
+                .ssh
+                .as_ref()
+                .ok_or_else(|| "缺少 SSH 连接配置".to_string())?;
             run_ssh_command(config, script)
         } else {
             let mut command = Command::new("sh");
@@ -221,12 +234,7 @@ impl Runner {
         let mut lines = host_section.lines();
         let username = lines.next().unwrap_or("").trim().to_string();
         let host = lines.next().unwrap_or("").trim().to_string();
-        let uptime_seconds = lines
-            .next()
-            .unwrap_or("")
-            .trim()
-            .parse()
-            .unwrap_or(0);
+        let uptime_seconds = lines.next().unwrap_or("").trim().parse().unwrap_or(0);
         let os = lines.next().unwrap_or("").trim().to_string();
 
         HostInfo {
@@ -295,20 +303,25 @@ fn run_command(mut command: Command) -> Result<CommandOutput, String> {
 
 fn run_ssh_command(config: &SshConfig, script: &str) -> Result<CommandOutput, String> {
     let (session, _socket) = connect_session(config)?;
-    let mut channel = session.channel_session().map_err(|error| error.to_string())?;
+    let mut channel = session
+        .channel_session()
+        .map_err(|error| error.to_string())?;
     channel.exec(script).map_err(|error| error.to_string())?;
 
     let mut stdout = String::new();
     let mut stderr = String::new();
-    channel.read_to_string(&mut stdout).map_err(|error| error.to_string())?;
-    channel.stderr().read_to_string(&mut stderr).map_err(|error| error.to_string())?;
+    channel
+        .read_to_string(&mut stdout)
+        .map_err(|error| error.to_string())?;
+    channel
+        .stderr()
+        .read_to_string(&mut stderr)
+        .map_err(|error| error.to_string())?;
     channel.wait_close().map_err(|error| error.to_string())?;
     let _ = channel.exit_status();
     let _ = session.disconnect(None, "monitor command complete", None);
 
-    Ok(CommandOutput {
-        stdout,
-    })
+    Ok(CommandOutput { stdout })
 }
 
 fn parse_cpu_samples(raw: &str) -> CpuInfo {
@@ -326,7 +339,11 @@ fn parse_cpu_samples(raw: &str) -> CpuInfo {
         let diffs = values
             .iter()
             .enumerate()
-            .map(|(index, value)| value.saturating_sub(*before.get(index).unwrap_or(&0)).to_string())
+            .map(|(index, value)| {
+                value
+                    .saturating_sub(*before.get(index).unwrap_or(&0))
+                    .to_string()
+            })
             .collect::<Vec<String>>()
             .join(" ");
         rows.push_str(&format!("{name} {diffs}\n"));
@@ -373,7 +390,10 @@ fn cpu_rows(raw: &str) -> HashMap<String, Vec<u64>> {
             }
             Some((
                 fields[0].to_string(),
-                fields[1..].iter().filter_map(|value| value.parse::<u64>().ok()).collect(),
+                fields[1..]
+                    .iter()
+                    .filter_map(|value| value.parse::<u64>().ok())
+                    .collect(),
             ))
         })
         .collect()
@@ -390,7 +410,10 @@ fn parse_cpu(raw: &str) -> CpuInfo {
         if fields.len() < 8 {
             continue;
         }
-        let values: Vec<f64> = fields[1..].iter().filter_map(|value| value.parse::<f64>().ok()).collect();
+        let values: Vec<f64> = fields[1..]
+            .iter()
+            .filter_map(|value| value.parse::<f64>().ok())
+            .collect();
         if values.len() < 7 {
             continue;
         }
@@ -417,7 +440,10 @@ fn parse_memory(raw: &str) -> MemoryInfo {
     for line in raw.lines() {
         let fields: Vec<&str> = line.split_whitespace().collect();
         if fields.len() >= 2 {
-            values.insert(fields[0].trim_end_matches(':').to_string(), fields[1].parse::<u64>().unwrap_or(0) * 1024);
+            values.insert(
+                fields[0].trim_end_matches(':').to_string(),
+                fields[1].parse::<u64>().unwrap_or(0) * 1024,
+            );
         }
     }
     let total = *values.get("MemTotal").unwrap_or(&0);
@@ -440,7 +466,10 @@ fn parse_networks(raw: &str) -> Vec<NetworkInterface> {
     for line in addr.lines() {
         let fields: Vec<&str> = line.split_whitespace().collect();
         if fields.len() >= 4 {
-            ips.insert(fields[1].to_string(), fields[3].split('/').next().unwrap_or("").to_string());
+            ips.insert(
+                fields[1].to_string(),
+                fields[3].split('/').next().unwrap_or("").to_string(),
+            );
         }
     }
     dev.lines()

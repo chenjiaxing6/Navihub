@@ -105,7 +105,8 @@ pub fn ssh_connect(
         .remove(&session_id);
 
     thread::spawn(move || {
-        if let Err(error) = connect_terminal_session(app.clone(), state, session_id.clone(), config) {
+        if let Err(error) = connect_terminal_session(app.clone(), state, session_id.clone(), config)
+        {
             emit_terminal(&app, &session_id, "error", &error);
         }
     });

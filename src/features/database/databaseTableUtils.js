@@ -69,6 +69,10 @@ export function formatTableDate(value) {
   return value ? String(value).replace(".000000", "") : "";
 }
 
+export function formatBooleanText(value) {
+  return value ? "是" : "否";
+}
+
 export function schemaTableCellValue(row, column) {
   const value = row[column.key];
   return column.formatter ? column.formatter(value) : formatCellValue(value);

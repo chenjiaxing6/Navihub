@@ -8,11 +8,13 @@ import {
   defaultDesignIndex,
   defaultDesignTrigger,
   MYSQL_COLUMN_TYPE_OPTIONS,
+  SQLITE_COLUMN_TYPE_OPTIONS,
   TABLE_DESIGN_SECTIONS,
 } from "./databaseTableDesigner";
 
 const props = defineProps({
   schema: { type: String, required: true },
+  engine: { type: String, default: "mysql" },
   sqlError: { type: String, default: "" },
   sqlPreview: { type: String, default: "" },
   state: { type: Object, default: null },
@@ -25,6 +27,7 @@ const visibleIndexes = computed(() => props.state?.indexes ?? []);
 const visibleForeignKeys = computed(() => props.state?.foreignKeys ?? []);
 const visibleTriggers = computed(() => props.state?.triggers ?? []);
 const visibleChecks = computed(() => props.state?.checks ?? []);
+const columnTypeOptions = computed(() => props.engine === "sqlite" ? SQLITE_COLUMN_TYPE_OPTIONS : MYSQL_COLUMN_TYPE_OPTIONS);
 const sqlPreviewText = computed(() => {
   if (props.sqlError) {
     return props.sqlError;
@@ -125,7 +128,7 @@ function handleAutoIncrementChange(column) {
     column.primary = true;
     column.key = "PRIMARY";
     if (!/int/i.test(column.typeName)) {
-      column.typeName = "BIGINT UNSIGNED";
+      column.typeName = props.engine === "sqlite" ? "INTEGER" : "BIGINT UNSIGNED";
       column.length = "";
       column.scale = "";
     }
@@ -209,7 +212,7 @@ function handleAutoIncrementChange(column) {
             @change="handleColumnTypeChange(column)"
           >
               <el-option
-                v-for="type in MYSQL_COLUMN_TYPE_OPTIONS"
+                v-for="type in columnTypeOptions"
                 :key="type"
                 :label="type"
                 :value="type"

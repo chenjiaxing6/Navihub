@@ -119,7 +119,10 @@ pub struct MysqlTableDetail {
     pub ddl: String,
 }
 
-fn effective_database<'a>(config: &'a MysqlConnectionConfig, database: Option<&'a str>) -> Option<&'a str> {
+fn effective_database<'a>(
+    config: &'a MysqlConnectionConfig,
+    database: Option<&'a str>,
+) -> Option<&'a str> {
     database
         .or(config.database.as_deref())
         .filter(|value| !value.is_empty())
@@ -150,7 +153,11 @@ fn create_pool(config: &MysqlConnectionConfig, database: Option<&str>) -> Result
     Pool::new(builder).map_err(|error| error.to_string())
 }
 
-pub(crate) fn pool(state: &MysqlState, config: &MysqlConnectionConfig, database: Option<&str>) -> Result<Pool, String> {
+pub(crate) fn pool(
+    state: &MysqlState,
+    config: &MysqlConnectionConfig,
+    database: Option<&str>,
+) -> Result<Pool, String> {
     let key = pool_key(config, database);
     if let Some(pool) = state
         .pools
@@ -242,10 +249,7 @@ fn fetch_table_items(
     .map_err(|error| error.to_string())
 }
 
-fn fetch_routines(
-    conn: &mut PooledConn,
-    database: &str,
-) -> Result<Vec<JsonValue>, String> {
+fn fetch_routines(conn: &mut PooledConn, database: &str) -> Result<Vec<JsonValue>, String> {
     conn.exec_map(
         "SELECT ROUTINE_NAME
          FROM ROUTINES
@@ -461,9 +465,10 @@ pub fn mysql_describe_table(
         .and_then(|value| value.as_str().map(ToString::to_string))
         .unwrap_or_default();
 
-    let foreign_keys = conn
-        .exec_map(
-            "SELECT
+    let foreign_keys =
+        conn
+            .exec_map(
+                "SELECT
                 k.CONSTRAINT_NAME,
                 k.COLUMN_NAME,
                 k.REFERENCED_TABLE_NAME,
@@ -478,27 +483,29 @@ pub fn mysql_describe_table(
                AND k.TABLE_NAME = :table
                AND k.REFERENCED_TABLE_NAME IS NOT NULL
              ORDER BY k.CONSTRAINT_NAME, k.ORDINAL_POSITION",
-            params! {
-                "schema" => &database,
-                "table" => &table,
-            },
-            |(name, column_name, referenced_table, referenced_column, update_rule, delete_rule): (
-                String,
-                String,
-                String,
-                String,
-                String,
-                String,
-            )| MysqlForeignKeyInfo {
-                name,
-                column_name,
-                referenced_table,
-                referenced_column,
-                update_rule,
-                delete_rule,
-            },
-        )
-        .map_err(|error| error.to_string())?;
+                params! {
+                    "schema" => &database,
+                    "table" => &table,
+                },
+                |(
+                    name,
+                    column_name,
+                    referenced_table,
+                    referenced_column,
+                    update_rule,
+                    delete_rule,
+                ): (String, String, String, String, String, String)| {
+                    MysqlForeignKeyInfo {
+                        name,
+                        column_name,
+                        referenced_table,
+                        referenced_column,
+                        update_rule,
+                        delete_rule,
+                    }
+                },
+            )
+            .map_err(|error| error.to_string())?;
 
     let triggers = conn
         .exec_map(
@@ -551,11 +558,15 @@ pub fn mysql_describe_table(
             },
         )
         .map_err(|error| error.to_string())?
-        .map(|(engine, collation, comment): (Option<String>, Option<String>, Option<String>)| MysqlTableOptionsInfo {
-            engine: engine.unwrap_or_default(),
-            collation: collation.unwrap_or_default(),
-            comment: comment.unwrap_or_default(),
-        })
+        .map(
+            |(engine, collation, comment): (Option<String>, Option<String>, Option<String>)| {
+                MysqlTableOptionsInfo {
+                    engine: engine.unwrap_or_default(),
+                    collation: collation.unwrap_or_default(),
+                    comment: comment.unwrap_or_default(),
+                }
+            },
+        )
         .unwrap_or(MysqlTableOptionsInfo {
             engine: String::new(),
             collation: String::new(),

@@ -6,10 +6,10 @@ import zhCn from "element-plus/es/locale/lang/zh-cn";
 import AppShell from "./layouts/AppShell.vue";
 import ConnectionDialog from "./features/connections/ConnectionDialog.vue";
 import DatabaseCreateDialog from "./features/database/DatabaseCreateDialog.vue";
-import { createMysqlConnection, formatMysqlMeta } from "./features/database/databaseDefaults";
+import { createMysqlConnection, createSqliteConnection, formatDatabaseMeta } from "./features/database/databaseDefaults";
+import { loadDatabaseSchema } from "./features/database/databaseApi";
 import { runDatabaseObjectAction } from "./features/database/databaseObjectActions";
 import { alterMysqlDatabaseOptions, createMysqlDatabase } from "./features/database/mysqlAdminApi";
-import { loadMysqlSchema } from "./features/database/mysqlApi";
 import SettingsDialog from "./features/settings/SettingsDialog.vue";
 import { useAppConnections } from "./shared/useAppConnections";
 import { createSshConnection, formatSshMeta } from "./features/terminal/sshDefaults";
@@ -210,7 +210,7 @@ async function openConnection(connection) {
   openSchemaKeys.value = openSchemaKeys.value.filter((key) => !key.startsWith(`schema:${connection.id}:`));
 
   try {
-    const schemas = await loadMysqlSchema(connection.config);
+    const schemas = await loadDatabaseSchema(connection);
     updateConnectionSchemas(connection.id, schemas);
   } catch (error) {
     connectionList.value = connectionList.value.map((item) =>
@@ -253,7 +253,7 @@ async function refreshConnection(connection) {
   }
 
   try {
-    const schemas = await loadMysqlSchema(connection.config);
+    const schemas = await loadDatabaseSchema(connection);
     updateConnectionSchemas(connection.id, schemas);
     const latestConnection = connectionList.value.find((item) => item.id === connection.id) ?? connection;
     const savedQueries = latestConnection.savedQueries ?? connection.savedQueries;
@@ -291,7 +291,7 @@ function updateMysqlConnection(payload) {
     return {
       ...connection,
       ...payload,
-      meta: payload.meta ?? formatMysqlMeta(nextConfig),
+      meta: payload.meta ?? formatDatabaseMeta(nextConfig),
       config: nextConfig,
     };
   });
@@ -335,7 +335,9 @@ function createConnection(payload) {
 
   const connection = payload.workspace === "ssh"
     ? createSshConnection({ ...payload, folderId: pendingConnectionFolderId.value })
-    : createMysqlConnection({ ...payload, folderId: pendingConnectionFolderId.value });
+    : payload.config?.engine === "sqlite"
+      ? createSqliteConnection({ ...payload, folderId: pendingConnectionFolderId.value })
+      : createMysqlConnection({ ...payload, folderId: pendingConnectionFolderId.value });
 
   connectionList.value = [...connectionList.value, connection];
   activeWorkspace.value = connection.workspace;
@@ -465,7 +467,7 @@ function updateConnection(payload) {
       ...connection,
       name: payload.name,
       config: nextConfig,
-      meta: connection.workspace === "ssh" ? formatSshMeta(nextConfig) : formatMysqlMeta(nextConfig),
+      meta: connection.workspace === "ssh" ? formatSshMeta(nextConfig) : formatDatabaseMeta(nextConfig),
       schemas: connection.workspace === "database" ? connection.schemas : undefined,
     };
   });
@@ -503,7 +505,11 @@ async function deleteConnection(connection) {
 }
 
 function duplicateConnection(connection) {
-  const createConnectionByWorkspace = connection.workspace === "ssh" ? createSshConnection : createMysqlConnection;
+  const createConnectionByWorkspace = connection.workspace === "ssh"
+    ? createSshConnection
+    : connection.config?.engine === "sqlite"
+      ? createSqliteConnection
+      : createMysqlConnection;
   const duplicate = createConnectionByWorkspace({
     ...connection,
     id: `${connection.workspace}-${Date.now()}`,
@@ -645,6 +651,7 @@ function openTableDesigner(payload) {
     schema: schemaName,
     table: tableName,
     mode,
+    engine: payload.connection.config?.engine ?? "mysql",
   };
   dynamicTabs.value = [...dynamicTabs.value, tab];
   setWorkspaceActiveTopTabId("database", tab.id);
@@ -927,12 +934,20 @@ function closeDroppedObjectTabs(connectionId, result) {
 
 async function handleDatabaseObjectAction(payload) {
   if (payload?.action === "create-database") {
+    if (payload.connection?.config?.engine === "sqlite") {
+      ElMessage.warning("SQLite 数据库通过文件创建，请新建 SQLite 连接并选择保存路径");
+      return;
+    }
     pendingDatabaseCreatePayload.value = payload;
     databaseCreateDialogVisible.value = true;
     return;
   }
 
   if (payload?.action === "edit-database") {
+    if (payload.connection?.config?.engine === "sqlite") {
+      ElMessage.warning("SQLite 不支持编辑数据库字符集/排序规则");
+      return;
+    }
     pendingDatabaseCreatePayload.value = payload;
     databaseCreateDialogVisible.value = true;
     return;
